@@ -1,5 +1,5 @@
 [package]
-name = "icmp"
+name = "icmp-socket"
 version = "0.1.0"
 authors = ["Jeremy Wall <jeremy@marzhillstudios.com>"]
 edition = "2018"
@@ -9,3 +9,4 @@ edition = "2018"
 [dependencies]
 socket2 = "0.3.19"
 packet = "0.1.4"
+byteorder = "1.3.4"

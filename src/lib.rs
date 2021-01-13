@@ -13,5 +13,8 @@
 // limitations under the License.
 
 pub mod socket;
+pub mod echo;
+pub mod packet;
 
-pub use socket::{IcmpSocket, IcmpSocket4, IcmpSocket6};
+pub use crate::packet::{Icmpv6Packet, Icmpv6Message};
+pub use socket::{IcmpSocket4, IcmpSocket6};
