@@ -327,3 +327,18 @@ impl Icmpv6Packet {
 pub enum Icmpv6PacketBuildError {
     InvalidCode(u8),
 }
+use Icmpv6PacketBuildError::InvalidCode;
+
+impl std::fmt::Display for Icmpv6PacketBuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            InvalidCode(c) => format!("Invalid Code: {}", c),
+        })
+    }
+}
+
+impl From<Icmpv6PacketBuildError> for std::io::Error {
+    fn from(err: Icmpv6PacketBuildError) -> Self {
+        std::io::Error::new(std::io::ErrorKind::Other, format!("{}", err))
+    }
+}

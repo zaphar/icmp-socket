@@ -95,7 +95,6 @@ impl IcmpSocket6 {
         Ok(())
     }
 
-    // TODO(jwall): This should take an actual packet not the payload.
     pub fn send_to(&mut self, dest: Ipv6Addr, mut packet: Icmpv6Packet) -> std::io::Result<()> {
         let source = match self.bound_to {
             Some(ref addr) => addr,

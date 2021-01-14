@@ -11,11 +11,13 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use std::convert::From;
+use std::convert::{TryFrom, From, TryInto};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use packet::{Builder, Packet as P};
 use packet::icmp::echo::Packet;
+
+use crate::packet::{Icmpv6Packet, Icmpv6Message::{EchoReply, EchoRequest}};
 
 // TODO(jwall): It turns out that the ICMPv6 packets are sufficiently
 // different from the ICMPv4 packets. In order to handle them appropriately
@@ -23,9 +25,29 @@ use packet::icmp::echo::Packet;
 use crate::{IcmpSocket4, IcmpSocket6};
 
 pub struct EchoResponse {
-    identifier: u16,
-    sequence: u16,
-    payload: Vec<u8>,
+    pub identifier: u16,
+    pub sequence: u16,
+    pub payload: Vec<u8>,
+}
+
+impl TryFrom<Icmpv6Packet> for EchoResponse {
+    type Error = std::io::Error;
+
+    fn try_from(pkt: Icmpv6Packet) -> Result<Self, Self::Error> {
+        if let EchoReply{
+            identifier,
+            sequence,
+            payload,
+        } = pkt.message {
+            Ok(EchoResponse{
+                identifier,
+                sequence,
+                payload,
+            })
+        } else {
+            Err(std::io::Error::new(std::io::ErrorKind::Other, "Incorrect icmpv6 message"))
+        }
+    }
 }
 
 pub struct EchoSocket4 {
@@ -70,5 +92,43 @@ impl EchoSocket4 {
 impl From<IcmpSocket4> for EchoSocket4 {
     fn from(sock: IcmpSocket4) -> Self {
         EchoSocket4::new(sock)
+    }
+}
+
+pub struct EchoSocket6 {
+    sequence: u16,
+    buf: Vec<u8>,
+    inner: IcmpSocket6,
+}
+
+impl EchoSocket6 {
+
+    pub fn new(sock: IcmpSocket6) -> Self {
+        EchoSocket6{inner:sock, sequence: 0, buf: Vec::with_capacity(512)}
+    }
+
+    pub fn set_max_hops(&mut self, hops: u32) {
+        self.inner.set_max_hops(hops);
+    }
+
+    pub fn send_ping(&mut self, dest: Ipv6Addr, identifier: u16, payload: &[u8]) -> std::io::Result<()> {
+        let packet = Icmpv6Packet::with_echo_request(identifier, self.sequence, payload.to_owned())?;
+        self.sequence += 1;
+        self.inner.send_to(dest, packet)?;
+        Ok(())
+    }
+
+    pub fn recv_ping(&mut self) -> std::io::Result<EchoResponse> {
+        let bytes_read = self.inner.rcv_from(&mut self.buf)?;
+        match Icmpv6Packet::parse(&self.buf[0..bytes_read]) {
+            Ok(p) => return Ok(p.try_into()?),
+            Err(e) => return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Malformed ICMP Response: {:?}", e))),
+        };
+    }
+}
+
+impl From<IcmpSocket6> for EchoSocket6 {
+    fn from(sock: IcmpSocket6) -> Self {
+        EchoSocket6::new(sock)
     }
 }
