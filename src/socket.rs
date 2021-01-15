@@ -20,7 +20,7 @@ use socket2::{Socket, Domain, Type, Protocol};
 use crate::packet::Icmpv6Packet;
 
 fn ip_to_socket(ip: &IpAddr) -> SocketAddr {
-    format!("{}:0", ip).parse::<SocketAddr>().unwrap()
+    SocketAddr::new(*ip, 0)
 }
 
 pub struct Opts {

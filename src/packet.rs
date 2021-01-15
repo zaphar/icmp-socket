@@ -25,20 +25,21 @@ fn sum_big_endian_words(bs: &[u8]) -> u32 {
 
     let len = bs.len();
     let mut data = &bs[..];
-    let mut sum = 032;
-    // We need to stop when we have less than 2 bytes left.
+    let mut sum = 0u32;
+    // Iterate by word which is two bytes.
     while data.len() >= 2 {
         sum += BigEndian::read_u16(&data[0..2]) as u32;
-        // remove the first two now that we've already summed them
+        // remove the first two bytes now that we've already summed them
         data = &data[2..];
     }
 
-    if len % 2 != 0 { // If odd then checksum the last byte
-        sum += (bs[len - 1] as u32) << 8;
+    if (len % 2) != 0 { // If odd then checksum the last byte
+        sum += (data[0] as u32) << 8;
     }
     return sum;
 }
 
+#[derive(Debug)]
 pub enum Icmpv6Message {
     // NOTE(JWALL): All of the below integers should be parsed as big endian on the
     // wire.
@@ -112,6 +113,7 @@ impl Icmpv6Message {
     }
 }
 
+#[derive(Debug)]
 pub struct Icmpv6Packet {
     // NOTE(JWALL): All of the below integers should be parsed as big endian on the
     // wire.
@@ -135,8 +137,8 @@ impl Icmpv6Packet {
         if bytes.len() < 8 {
             return Err(PacketParseError::PacketTooSmall(bytes.len()));
         }
-        let (typ, code, checksum) = (bytes[0], bytes[1], BigEndian::read_u16(&bytes[2..3]));
-        let next_field = BigEndian::read_u32(&bytes[4..7]);
+        let (typ, code, checksum) = (bytes[0], bytes[1], BigEndian::read_u16(&bytes[2..4]));
+        let next_field = BigEndian::read_u32(&bytes[4..8]);
         let payload = bytes[8..].to_owned();
         let message = match typ {
             1 => Unreachable{
@@ -160,13 +162,13 @@ impl Icmpv6Packet {
                 payload: payload, 
             },
             128 => EchoRequest{
-                identifier: BigEndian::read_u16(&bytes[4..5]),
-                sequence: BigEndian::read_u16(&bytes[6..7]),
+                identifier: BigEndian::read_u16(&bytes[4..6]),
+                sequence: BigEndian::read_u16(&bytes[6..8]),
                 payload: payload,
             },
             129 => EchoReply{
-                identifier: BigEndian::read_u16(&bytes[4..5]),
-                sequence: BigEndian::read_u16(&bytes[6..7]),
+                identifier: BigEndian::read_u16(&bytes[4..6]),
+                sequence: BigEndian::read_u16(&bytes[6..8]),
                 payload: payload,
             },
             _ => return Err(PacketParseError::UnrecognizedICMPType),
@@ -205,13 +207,13 @@ impl Icmpv6Packet {
         sum += ipv6_sum_words(dest);
         // according to rfc4443: https://tools.ietf.org/html/rfc4443#section-2.3
         // the ip next header value is 58
-        sum += 58u32;
+        sum += 58;
 
+        // Then sum the len of the message bytes and then the message bytes starting
+        // with the message type field and with the checksum field set to 0.
         let bytes = self.get_bytes(false);
         let len = bytes.len();
         sum += len as u32;
-        // Then append the message bytes as a byte buffer starting with the message
-        // type field with the checksum field set to 0.
         sum += sum_big_endian_words(&bytes);
         
         // handle the carry
@@ -340,5 +342,82 @@ impl std::fmt::Display for Icmpv6PacketBuildError {
 impl From<Icmpv6PacketBuildError> for std::io::Error {
     fn from(err: Icmpv6PacketBuildError) -> Self {
         std::io::Error::new(std::io::ErrorKind::Other, format!("{}", err))
+    }
+}
+
+#[cfg(test)]
+mod checksum_tests {
+    use super::*;
+
+    #[test]
+    fn echo_packet_parse_test() {
+        // NOTE(jwall): I am shamelessly ripping ff the cases for this from libpnet
+        // The equivalent of your typical ping -6 ::1%lo
+        let lo = &Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1);
+        let mut data = vec![
+            0x80, // Icmpv6 Type
+            0x00, // Code
+            0xff, 0xff, // Checksum
+            0x00, 0x00, // Id
+            0x00, 0x01, // Sequence
+            // 56 bytes of "random" data
+            0x20, 0x20, 0x75, 0x73, 0x74, 0x20, 0x61, 0x20,
+            0x66, 0x6c, 0x65, 0x73, 0x68, 0x20, 0x77, 0x6f,
+            0x75, 0x6e, 0x64, 0x20, 0x20, 0x74, 0x69, 0x73,
+            0x20, 0x62, 0x75, 0x74, 0x20, 0x61, 0x20, 0x73,
+            0x63, 0x72, 0x61, 0x74, 0x63, 0x68, 0x20, 0x20,
+            0x6b, 0x6e, 0x69, 0x67, 0x68, 0x74, 0x73, 0x20,
+            0x6f, 0x66, 0x20, 0x6e, 0x69, 0x20, 0x20, 0x20
+        ];
+        let pkt = Icmpv6Packet::parse(&data).unwrap();
+        assert_eq!(pkt.typ, 128);
+        assert_eq!(pkt.code, 0x00);
+        if let EchoRequest{
+            identifier,
+            sequence,
+            payload,
+        }= &pkt.message {
+            assert_eq!(*identifier, 0);
+            assert_eq!(*sequence, 1);
+            assert_eq!(payload, &[
+                0x20, 0x20, 0x75, 0x73, 0x74, 0x20, 0x61, 0x20,
+                0x66, 0x6c, 0x65, 0x73, 0x68, 0x20, 0x77, 0x6f,
+                0x75, 0x6e, 0x64, 0x20, 0x20, 0x74, 0x69, 0x73,
+                0x20, 0x62, 0x75, 0x74, 0x20, 0x61, 0x20, 0x73,
+                0x63, 0x72, 0x61, 0x74, 0x63, 0x68, 0x20, 0x20,
+                0x6b, 0x6e, 0x69, 0x67, 0x68, 0x74, 0x73, 0x20,
+                0x6f, 0x66, 0x20, 0x6e, 0x69, 0x20, 0x20, 0x20
+            ]);
+        } else  {
+            assert!(false, "Packet did not parse as an EchoRequest {:?}", pkt.message);
+        }
+        assert_eq!(pkt.get_bytes(true), data);
+        assert_eq!(pkt.calculate_checksum(lo, lo), 0x1d2e);
+
+        // Check echo response as well
+        data[0] = 0x81;
+        let pkt = Icmpv6Packet::parse(&data).unwrap();
+        assert_eq!(pkt.typ, 129);
+        assert_eq!(pkt.code, 0);
+        if let EchoReply{
+            identifier,
+            sequence,
+            payload,
+        }= &pkt.message {
+            assert_eq!(*identifier, 0);
+            assert_eq!(*sequence, 1);
+            assert_eq!(payload, &[
+                0x20, 0x20, 0x75, 0x73, 0x74, 0x20, 0x61, 0x20,
+                0x66, 0x6c, 0x65, 0x73, 0x68, 0x20, 0x77, 0x6f,
+                0x75, 0x6e, 0x64, 0x20, 0x20, 0x74, 0x69, 0x73,
+                0x20, 0x62, 0x75, 0x74, 0x20, 0x61, 0x20, 0x73,
+                0x63, 0x72, 0x61, 0x74, 0x63, 0x68, 0x20, 0x20,
+                0x6b, 0x6e, 0x69, 0x67, 0x68, 0x74, 0x73, 0x20,
+                0x6f, 0x66, 0x20, 0x6e, 0x69, 0x20, 0x20, 0x20
+            ]);
+        } else  {
+            assert!(false, "Packet did not parse as an EchoReply {:?}", pkt.message);
+        }
+        assert_eq!(pkt.calculate_checksum(lo, lo), 0x1c2e);
     }
 }
