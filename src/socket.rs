@@ -103,7 +103,8 @@ impl IcmpSocket6 {
         packet = packet.with_checksum(source, &dest);
         let dest = ip_to_socket(&IpAddr::V6(dest));
         self.inner.set_unicast_hops_v6(self.opts.hops)?;
-        self.inner.send_to(&packet.get_bytes(true), &(dest.into()))?;
+        let pkt = packet.get_bytes(true);
+        self.inner.send_to(&pkt, &(dest.into()))?;
         Ok(())
     }
    

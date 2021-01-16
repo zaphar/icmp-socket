@@ -39,7 +39,7 @@ fn sum_big_endian_words(bs: &[u8]) -> u32 {
     return sum;
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Icmpv6Message {
     // NOTE(JWALL): All of the below integers should be parsed as big endian on the
     // wire.
@@ -300,7 +300,7 @@ impl Icmpv6Packet {
     /// Construct a packet for Echo Request messages.
     pub fn with_echo_request(identifier: u16, sequence: u16, payload: Vec<u8>) -> Result<Self, Icmpv6PacketBuildError> {
         Ok(Self {
-            typ: 4,
+            typ: 128,
             code: 0,
             checksum: 0,
             message: EchoRequest{
@@ -314,7 +314,7 @@ impl Icmpv6Packet {
     /// Construct a packet for Echo Reply messages.
     pub fn with_echo_reply(identifier: u16, sequence: u16, payload: Vec<u8>) -> Result<Self, Icmpv6PacketBuildError> {
         Ok(Self {
-            typ: 4,
+            typ: 129,
             code: 0,
             checksum: 0,
             message: EchoReply{
@@ -326,6 +326,7 @@ impl Icmpv6Packet {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub enum Icmpv6PacketBuildError {
     InvalidCode(u8),
 }
@@ -348,6 +349,72 @@ impl From<Icmpv6PacketBuildError> for std::io::Error {
 #[cfg(test)]
 mod checksum_tests {
     use super::*;
+
+    #[test]
+    fn packet_construction_echo_request_test() {
+        let pkt = Icmpv6Packet::with_echo_request(42, 1, vec![1,2,3,4]).unwrap();
+        assert_eq!(pkt.typ, 128);
+        assert_eq!(pkt.code, 0);
+        assert_eq!(pkt.message, EchoRequest{
+            identifier: 42, sequence: 1, payload: vec![1,2,3,4],
+        });
+    }
+
+    #[test]
+    fn packet_construction_echo_reply_test() {
+        let pkt = Icmpv6Packet::with_echo_reply(42, 1, vec![1,2,3,4]).unwrap();
+        assert_eq!(pkt.typ, 129);
+        assert_eq!(pkt.code, 0);
+        assert_eq!(pkt.message, EchoReply{
+            identifier: 42, sequence: 1, payload: vec![1,2,3,4],
+        });
+    }
+
+    #[test]
+    fn packet_construction_too_big_test() {
+        let pkt = Icmpv6Packet::with_packet_too_big(3, vec![1,2,3,4]).unwrap();
+        assert_eq!(pkt.typ, 2);
+        assert_eq!(pkt.code, 0);
+        assert_eq!(pkt.message, PacketTooBig{
+            mtu: 3, invoking_packet: vec![1,2,3,4],
+        });
+    }
+
+    #[test]
+    fn packet_construction_time_exceeded() {
+        let pkt = Icmpv6Packet::with_time_exceeded(0, vec![1,2,3,4]).unwrap();
+        assert_eq!(pkt.typ, 3);
+        assert_eq!(pkt.code, 0);
+        assert_eq!(pkt.message, TimeExceeded{
+            _unused: 0, invoking_packet: vec![1,2,3,4],
+        });
+    }
+    
+    #[test]
+    fn packet_construction_time_exceeded_invalid_code() {
+        let pkt = Icmpv6Packet::with_time_exceeded(2, vec![1,2,3,4]);
+        assert!(pkt.is_err());
+        let e = pkt.unwrap_err();
+        assert_eq!(e, Icmpv6PacketBuildError::InvalidCode(2));
+    }
+
+    #[test]
+    fn packet_construction_parameter_problem() {
+        let pkt = Icmpv6Packet::with_parameter_problem(0, 30, vec![1,2,3,4,5,6,7,8,9,10]).unwrap();
+        assert_eq!(pkt.typ, 4);
+        assert_eq!(pkt.code, 0);
+        assert_eq!(pkt.message, ParameterProblem{
+            pointer: 30, invoking_packet: vec![1,2,3,4,5,6,7,8,9,10],
+        });
+    }
+    
+    #[test]
+    fn packet_construction_parameter_problem_invalid_code() {
+        let pkt = Icmpv6Packet::with_parameter_problem(3, 30, vec![1,2,3,4]);
+        assert!(pkt.is_err());
+        let e = pkt.unwrap_err();
+        assert_eq!(e, Icmpv6PacketBuildError::InvalidCode(3));
+    }
 
     #[test]
     fn echo_packet_parse_test() {

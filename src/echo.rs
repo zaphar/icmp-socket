@@ -105,6 +105,7 @@ pub struct EchoSocket6 {
 impl EchoSocket6 {
 
     pub fn new(sock: IcmpSocket6) -> Self {
+        // TODO(jwall): How to set ICMPv6 filters.
         EchoSocket6{inner:sock, sequence: 0, buf: Vec::with_capacity(512)}
     }
 
