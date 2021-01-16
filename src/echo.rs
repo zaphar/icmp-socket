@@ -17,13 +17,14 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use packet::{Builder, Packet as P};
 use packet::icmp::echo::Packet;
 
-use crate::packet::{Icmpv6Packet, Icmpv6Message::{EchoReply, EchoRequest}};
+use crate::packet::{Icmpv6Packet, Icmpv6Message::EchoReply};
 
 // TODO(jwall): It turns out that the ICMPv6 packets are sufficiently
 // different from the ICMPv4 packets. In order to handle them appropriately
 // It is going to take some consideration.
 use crate::{IcmpSocket4, IcmpSocket6};
 
+#[derive(Debug)]
 pub struct EchoResponse {
     pub identifier: u16,
     pub sequence: u16,
@@ -45,7 +46,7 @@ impl TryFrom<Icmpv6Packet> for EchoResponse {
                 payload,
             })
         } else {
-            Err(std::io::Error::new(std::io::ErrorKind::Other, "Incorrect icmpv6 message"))
+            Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Incorrect icmpv6 message: {:?}, code: {}", pkt.message, pkt.code)))
         }
     }
 }
@@ -119,6 +120,7 @@ impl EchoSocket6 {
     }
 
     pub fn recv_ping(&mut self) -> std::io::Result<EchoResponse> {
+        self.buf.resize(512, 0);
         let bytes_read = self.inner.rcv_from(&mut self.buf)?;
         match Icmpv6Packet::parse(&self.buf[0..bytes_read]) {
             Ok(p) => return Ok(p.try_into()?),

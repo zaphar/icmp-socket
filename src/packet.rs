@@ -369,7 +369,7 @@ mod checksum_tests {
             0x6b, 0x6e, 0x69, 0x67, 0x68, 0x74, 0x73, 0x20,
             0x6f, 0x66, 0x20, 0x6e, 0x69, 0x20, 0x20, 0x20
         ];
-        let pkt = Icmpv6Packet::parse(&data).unwrap();
+        let mut pkt = Icmpv6Packet::parse(&data).unwrap();
         assert_eq!(pkt.typ, 128);
         assert_eq!(pkt.code, 0x00);
         if let EchoRequest{
@@ -393,6 +393,8 @@ mod checksum_tests {
         }
         assert_eq!(pkt.get_bytes(true), data);
         assert_eq!(pkt.calculate_checksum(lo, lo), 0x1d2e);
+        pkt = pkt.with_checksum(lo, lo);
+        assert_eq!(pkt.checksum, 0x1d2e);
 
         // Check echo response as well
         data[0] = 0x81;
@@ -418,6 +420,7 @@ mod checksum_tests {
         } else  {
             assert!(false, "Packet did not parse as an EchoReply {:?}", pkt.message);
         }
+        assert_eq!(pkt.get_bytes(true), data);
         assert_eq!(pkt.calculate_checksum(lo, lo), 0x1c2e);
     }
 }
