@@ -12,15 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::convert::{Into, TryFrom};
+use std::convert::{Into, TryFrom, TryInto};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use socket2::{Domain, Protocol, Socket, Type};
 
-use crate::packet::Icmpv6Packet;
+use crate::packet::{Icmpv4Packet, Icmpv6Packet};
 
 fn ip_to_socket(ip: &IpAddr) -> SocketAddr {
     SocketAddr::new(*ip, 0)
+}
+
+pub trait IcmpSocket {
+    type AddrType;
+    type PacketType;
+
+    fn set_max_hops(&mut self, hops: u32);
+
+    fn bind<A: Into<Self::AddrType>>(&mut self, addr: A) -> std::io::Result<()>;
+
+    fn send_to(&mut self, dest: Self::AddrType, packet: Self::PacketType) -> std::io::Result<()>;
+
+    fn rcv_from(&self) -> std::io::Result<Self::PacketType>;
 }
 
 pub struct Opts {
@@ -41,12 +54,17 @@ impl IcmpSocket4 {
             opts: Opts { hops: 50 },
         })
     }
+}
 
-    pub fn set_max_hops(&mut self, hops: u32) {
+impl IcmpSocket for IcmpSocket4 {
+    type AddrType = Ipv4Addr;
+    type PacketType = Icmpv4Packet;
+
+    fn set_max_hops(&mut self, hops: u32) {
         self.opts.hops = hops;
     }
 
-    pub fn bind<A: Into<Ipv4Addr>>(&mut self, addr: A) -> std::io::Result<()> {
+    fn bind<A: Into<Self::AddrType>>(&mut self, addr: A) -> std::io::Result<()> {
         let addr = addr.into();
         self.bound_to = Some(addr.clone());
         let sock = ip_to_socket(&IpAddr::V4(addr));
@@ -54,17 +72,18 @@ impl IcmpSocket4 {
         Ok(())
     }
 
-    // TODO(jwall): This should take an actual packet not the payload.
-    pub fn send_to(&mut self, dest: Ipv4Addr, payload: &[u8]) -> std::io::Result<()> {
+    fn send_to(&mut self, dest: Self::AddrType, packet: Self::PacketType) -> std::io::Result<()> {
         let dest = ip_to_socket(&IpAddr::V4(dest));
         self.inner.set_ttl(self.opts.hops)?;
-        self.inner.send_to(payload, &(dest.into()))?;
+        self.inner
+            .send_to(&packet.get_bytes(true), &(dest.into()))?;
         Ok(())
     }
 
-    pub fn rcv_from(&self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let (read_count, _addr) = self.inner.recv_from(buf)?;
-        Ok(read_count)
+    fn rcv_from(&self) -> std::io::Result<Self::PacketType> {
+        let mut buf = vec![0; 512];
+        let (read_count, _addr) = self.inner.recv_from(&mut buf)?;
+        Ok(buf[0..read_count].try_into()?)
     }
 }
 
@@ -82,12 +101,17 @@ impl IcmpSocket6 {
             opts: Opts { hops: 50 },
         })
     }
+}
 
-    pub fn set_max_hops(&mut self, hops: u32) {
+impl IcmpSocket for IcmpSocket6 {
+    type AddrType = Ipv6Addr;
+    type PacketType = Icmpv6Packet;
+
+    fn set_max_hops(&mut self, hops: u32) {
         self.opts.hops = hops;
     }
 
-    pub fn bind<A: Into<Ipv6Addr>>(&mut self, addr: A) -> std::io::Result<()> {
+    fn bind<A: Into<Self::AddrType>>(&mut self, addr: A) -> std::io::Result<()> {
         let addr = addr.into();
         self.bound_to = Some(addr.clone());
         let sock = ip_to_socket(&IpAddr::V6(addr));
@@ -95,7 +119,11 @@ impl IcmpSocket6 {
         Ok(())
     }
 
-    pub fn send_to(&mut self, dest: Ipv6Addr, mut packet: Icmpv6Packet) -> std::io::Result<()> {
+    fn send_to(
+        &mut self,
+        dest: Self::AddrType,
+        mut packet: Self::PacketType,
+    ) -> std::io::Result<()> {
         let source = match self.bound_to {
             Some(ref addr) => addr,
             None => {
@@ -113,11 +141,10 @@ impl IcmpSocket6 {
         Ok(())
     }
 
-    pub fn rcv_from(&self) -> std::io::Result<Icmpv6Packet> {
+    fn rcv_from(&self) -> std::io::Result<Self::PacketType> {
         let mut buf = vec![0; 512];
         let (read_count, _addr) = self.inner.recv_from(&mut buf)?;
-        let pkt = Icmpv6Packet::parse(&buf[0..read_count])?;
-        Ok(pkt)
+        Ok(buf[0..read_count].try_into()?)
     }
 }
 

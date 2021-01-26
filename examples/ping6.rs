@@ -13,6 +13,7 @@
 // limitations under the License.
 use std::net::Ipv6Addr;
 
+use icmp_socket::socket::IcmpSocket;
 use icmp_socket::*;
 
 pub fn main() {

@@ -14,15 +14,10 @@
 use std::convert::{From, TryFrom, TryInto};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use packet::icmp::echo::Packet;
-use packet::{Builder, Packet as P};
-
-use crate::packet::{Icmpv6Message::EchoReply, Icmpv6Packet};
-
-// TODO(jwall): It turns out that the ICMPv6 packets are sufficiently
-// different from the ICMPv4 packets. In order to handle them appropriately
-// It is going to take some consideration.
-use crate::{IcmpSocket4, IcmpSocket6};
+use crate::{
+    packet::{Icmpv4Message, Icmpv4Packet, Icmpv6Message, Icmpv6Packet},
+    socket::{IcmpSocket, IcmpSocket4, IcmpSocket6},
+};
 
 #[derive(Debug)]
 pub struct EchoResponse {
@@ -35,7 +30,7 @@ impl TryFrom<Icmpv6Packet> for EchoResponse {
     type Error = std::io::Error;
 
     fn try_from(pkt: Icmpv6Packet) -> Result<Self, Self::Error> {
-        if let EchoReply {
+        if let Icmpv6Message::EchoReply {
             identifier,
             sequence,
             payload,
@@ -58,18 +53,44 @@ impl TryFrom<Icmpv6Packet> for EchoResponse {
     }
 }
 
+impl TryFrom<Icmpv4Packet> for EchoResponse {
+    type Error = std::io::Error;
+
+    fn try_from(pkt: Icmpv4Packet) -> Result<Self, Self::Error> {
+        if let Icmpv4Message::EchoReply {
+            identifier,
+            sequence,
+            payload,
+        } = pkt.message
+        {
+            Ok(EchoResponse {
+                identifier,
+                sequence,
+                payload,
+            })
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!(
+                    "Incorrect icmpv4 message: {:?}, code: {}",
+                    pkt.message, pkt.code
+                ),
+            ))
+        }
+    }
+}
+
 pub struct EchoSocket4 {
     sequence: u16,
-    buf: Vec<u8>,
     inner: IcmpSocket4,
 }
 
+// TODO(jwall): Make this a trait
 impl EchoSocket4 {
     pub fn new(sock: IcmpSocket4) -> Self {
         EchoSocket4 {
             inner: sock,
             sequence: 0,
-            buf: Vec::with_capacity(512),
         }
     }
 
@@ -83,41 +104,16 @@ impl EchoSocket4 {
         identifier: u16,
         payload: &[u8],
     ) -> std::io::Result<()> {
-        let packet = packet::icmp::Builder::default()
-            .echo()
-            .unwrap()
-            .request()
-            .unwrap()
-            .identifier(identifier)
-            .unwrap()
-            .sequence(self.sequence)
-            .unwrap()
-            .payload(payload)
-            .unwrap()
-            .build()
-            .unwrap();
+        let packet =
+            Icmpv4Packet::with_echo_request(identifier, self.sequence, payload.to_owned())?;
         self.sequence += 1;
-        self.inner.send_to(dest, &packet)?;
+        self.inner.send_to(dest, packet)?;
         Ok(())
     }
 
     pub fn recv_ping(&mut self) -> std::io::Result<EchoResponse> {
-        let bytes_read = self.inner.rcv_from(&mut self.buf)?;
-        match Packet::new(&self.buf[0..bytes_read]) {
-            Ok(p) => {
-                return Ok(EchoResponse {
-                    sequence: p.sequence(),
-                    identifier: p.identifier(),
-                    payload: p.payload().to_owned(),
-                })
-            }
-            Err(e) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Malformed ICMP Response: {:?}", e),
-                ))
-            }
-        };
+        let packet = self.inner.rcv_from()?;
+        Ok(packet.try_into()?)
     }
 }
 

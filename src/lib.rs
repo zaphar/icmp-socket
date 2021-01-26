@@ -16,5 +16,6 @@ pub mod echo;
 pub mod packet;
 pub mod socket;
 
-pub use crate::packet::{Icmpv6Message, Icmpv6Packet};
-pub use socket::{IcmpSocket4, IcmpSocket6};
+pub use echo::{EchoSocket4, EchoSocket6};
+pub use packet::{Icmpv4Message, Icmpv4Packet, Icmpv6Message, Icmpv6Packet};
+pub use socket::{IcmpSocket, IcmpSocket4, IcmpSocket6};

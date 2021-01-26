@@ -406,6 +406,7 @@ impl From<PacketParseError> for std::io::Error {
     }
 }
 
+#[derive(Debug)]
 pub enum Icmpv4Message {
     Unreachable {
         // type 3
@@ -585,6 +586,7 @@ impl Icmpv4Message {
     }
 }
 
+#[derive(Debug)]
 pub struct Icmpv4Packet {
     pub typ: u8,
     pub code: u8,
