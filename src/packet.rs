@@ -11,6 +11,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+use std::convert::TryFrom;
+
 use byteorder::{BigEndian, ByteOrder};
 use std::net::Ipv6Addr;
 
@@ -354,6 +356,13 @@ impl Icmpv6Packet {
     }
 }
 
+impl TryFrom<&[u8]> for Icmpv6Packet {
+    type Error = PacketParseError;
+    fn try_from(b: &[u8]) -> Result<Self, Self::Error> {
+        Icmpv6Packet::parse(b)
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Icmpv6PacketBuildError {
     InvalidCode(u8),
@@ -394,6 +403,350 @@ impl From<Icmpv6PacketBuildError> for std::io::Error {
 impl From<PacketParseError> for std::io::Error {
     fn from(err: PacketParseError) -> Self {
         std::io::Error::new(std::io::ErrorKind::Other, format!("{}", err))
+    }
+}
+
+pub enum Icmpv4Message {
+    Unreachable {
+        // type 3
+        padding: u32,
+        header: Vec<u8>,
+    },
+    TimeExceeded {
+        // type 11
+        padding: u32,
+        header: Vec<u8>,
+    },
+    ParameterProblem {
+        // type 12
+        pointer: u8,
+        padding: (u8, u16),
+        header: Vec<u8>,
+    },
+    Quench {
+        // type 4
+        padding: u32,
+        header: Vec<u8>,
+    },
+    Redirect {
+        // type 5
+        gateway: u32,
+        header: Vec<u8>,
+    },
+    Echo {
+        // type 8
+        identifier: u16,
+        sequence: u16,
+        payload: Vec<u8>,
+    },
+    EchoReply {
+        //  type 0
+        identifier: u16,
+        sequence: u16,
+        payload: Vec<u8>,
+    },
+    Timestamp {
+        // type 13
+        identifier: u16,
+        sequence: u16,
+        originate: u32,
+        receive: u32,
+        transmit: u32,
+    },
+    TimestampReply {
+        // type 14
+        identifier: u16,
+        sequence: u16,
+        originate: u32,
+        receive: u32,
+        transmit: u32,
+    },
+    Information {
+        // type 15
+        identifier: u16,
+        sequence: u16,
+    },
+    InformationReply {
+        // type 16
+        identifier: u16,
+        sequence: u16,
+    },
+}
+
+impl Icmpv4Message {
+    pub fn get_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(20);
+        match self {
+            Self::Unreachable {
+                // type 3
+                padding,
+                header,
+            }
+            | Self::TimeExceeded {
+                // type 11
+                padding,
+                header,
+            }
+            | Self::Quench {
+                // type 4
+                padding,
+                header,
+            }
+            | Self::Redirect {
+                // type 5
+                gateway: padding,
+                header,
+            } => {
+                let mut buf = vec![0; 4];
+                BigEndian::write_u32(&mut buf, *padding);
+                bytes.append(&mut buf);
+                bytes.extend_from_slice(header);
+            }
+            Self::Echo {
+                // type 8
+                identifier,
+                sequence,
+                payload,
+            }
+            | Self::EchoReply {
+                //  type 0
+                identifier,
+                sequence,
+                payload,
+            } => {
+                let mut buf = vec![0; 2];
+                BigEndian::write_u16(&mut buf, *identifier);
+                bytes.append(&mut buf);
+                buf.resize(2, 0);
+                BigEndian::write_u16(&mut buf, *sequence);
+                bytes.append(&mut buf);
+                bytes.extend_from_slice(payload);
+            }
+            Self::ParameterProblem {
+                // type 12
+                pointer,
+                padding,
+                header,
+            } => {
+                bytes.push(*pointer);
+                bytes.push(padding.0);
+                let mut buf = vec![0, 2];
+                BigEndian::write_u16(&mut buf, padding.1);
+                bytes.append(&mut buf);
+                bytes.extend_from_slice(header);
+            }
+            Self::Timestamp {
+                // type 13
+                identifier,
+                sequence,
+                originate,
+                receive,
+                transmit,
+            }
+            | Self::TimestampReply {
+                // type 14
+                identifier,
+                sequence,
+                originate,
+                receive,
+                transmit,
+            } => {
+                let mut buf = vec![0, 2];
+                BigEndian::write_u16(&mut buf, *identifier);
+                bytes.append(&mut buf);
+                BigEndian::write_u16(&mut buf, *sequence);
+                bytes.append(&mut buf);
+                buf = vec![0, 4];
+                BigEndian::write_u32(&mut buf, *originate);
+                bytes.append(&mut buf);
+                BigEndian::write_u32(&mut buf, *receive);
+                bytes.append(&mut buf);
+                BigEndian::write_u32(&mut buf, *transmit);
+                bytes.append(&mut buf);
+            }
+            Self::Information {
+                // type 15
+                identifier,
+                sequence,
+            }
+            | Self::InformationReply {
+                // type 16
+                identifier,
+                sequence,
+            } => {
+                let mut buf = vec![0, 2];
+                BigEndian::write_u16(&mut buf, *identifier);
+                bytes.append(&mut buf);
+                BigEndian::write_u16(&mut buf, *sequence);
+                bytes.append(&mut buf);
+            }
+        }
+        bytes
+    }
+}
+
+pub struct Icmpv4Packet {
+    pub typ: u8,
+    pub code: u8,
+    pub checksum: u16,
+    pub message: Icmpv4Message,
+}
+
+impl Icmpv4Packet {
+    pub fn parse<B: AsRef<[u8]>>(bytes: B) -> Result<Self, PacketParseError> {
+        let bytes = bytes.as_ref();
+        // NOTE(jwall): All ICMP packets are at least 8 bytes long.
+        let packet_len = bytes.len();
+        if packet_len < 8 {
+            return Err(PacketParseError::PacketTooSmall(bytes.len()));
+        }
+        let (typ, code, checksum) = (bytes[0], bytes[1], BigEndian::read_u16(&bytes[2..4]));
+        let message = match typ {
+            3 => Icmpv4Message::Unreachable {
+                padding: BigEndian::read_u32(&bytes[4..8]),
+                header: bytes[8..].to_owned(),
+            },
+            11 => Icmpv4Message::TimeExceeded {
+                padding: BigEndian::read_u32(&bytes[4..8]),
+                header: bytes[8..].to_owned(),
+            },
+            4 => Icmpv4Message::Quench {
+                padding: BigEndian::read_u32(&bytes[4..8]),
+                header: bytes[8..].to_owned(),
+            },
+            5 => Icmpv4Message::Redirect {
+                gateway: BigEndian::read_u32(&bytes[4..8]),
+                header: bytes[8..].to_owned(),
+            },
+            8 => Icmpv4Message::Echo {
+                identifier: BigEndian::read_u16(&bytes[4..6]),
+                sequence: BigEndian::read_u16(&bytes[6..8]),
+                payload: bytes[8..].to_owned(),
+            },
+            0 => Icmpv4Message::EchoReply {
+                identifier: BigEndian::read_u16(&bytes[4..6]),
+                sequence: BigEndian::read_u16(&bytes[6..8]),
+                payload: bytes[8..].to_owned(),
+            },
+            15 => Icmpv4Message::Information {
+                identifier: BigEndian::read_u16(&bytes[4..6]),
+                sequence: BigEndian::read_u16(&bytes[6..8]),
+            },
+            16 => Icmpv4Message::InformationReply {
+                identifier: BigEndian::read_u16(&bytes[4..6]),
+                sequence: BigEndian::read_u16(&bytes[6..8]),
+            },
+            // FIXME(jwall): Some of the below have size requirements larger than
+            // 8
+            13 => {
+                if packet_len < 20 {
+                    return Err(PacketParseError::PacketTooSmall(bytes.len()));
+                }
+                Icmpv4Message::Timestamp {
+                    identifier: BigEndian::read_u16(&bytes[4..6]),
+                    sequence: BigEndian::read_u16(&bytes[6..8]),
+                    originate: BigEndian::read_u32(&bytes[8..12]),
+                    receive: BigEndian::read_u32(&bytes[12..16]),
+                    transmit: BigEndian::read_u32(&bytes[16..20]),
+                }
+            }
+            14 => {
+                if packet_len < 20 {
+                    return Err(PacketParseError::PacketTooSmall(bytes.len()));
+                }
+                Icmpv4Message::TimestampReply {
+                    identifier: BigEndian::read_u16(&bytes[4..6]),
+                    sequence: BigEndian::read_u16(&bytes[6..8]),
+                    originate: BigEndian::read_u32(&bytes[8..12]),
+                    receive: BigEndian::read_u32(&bytes[12..16]),
+                    transmit: BigEndian::read_u32(&bytes[16..20]),
+                }
+            }
+            _ => return Err(PacketParseError::UnrecognizedICMPType),
+        };
+        return Ok(Icmpv4Packet {
+            typ: typ,
+            code: code,
+            checksum: checksum,
+            message: message,
+        });
+    }
+
+    /// Get this packet serialized to bytes suitable for sending on the wire.
+    pub fn get_bytes(&self, with_checksum: bool) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.push(self.typ);
+        bytes.push(self.code);
+        let mut buf = Vec::with_capacity(2);
+        buf.resize(2, 0);
+        BigEndian::write_u16(&mut buf, if with_checksum { self.checksum } else { 0 });
+        bytes.append(&mut buf);
+        bytes.append(&mut self.message.get_bytes());
+        return bytes;
+    }
+
+    /// Calculate the checksum for the packet given the provided source and destination
+    /// addresses.
+    pub fn calculate_checksum(&self) -> u16 {
+        // First sum the pseudo header
+        let mut sum = 0u32;
+
+        // Then sum the len of the message bytes and then the message bytes starting
+        // with the message type field and with the checksum field set to 0.
+        let bytes = self.get_bytes(false);
+        sum += sum_big_endian_words(&bytes);
+
+        // handle the carry
+        while sum >> 16 != 0 {
+            sum = (sum >> 16) + (sum & 0xFFFF);
+        }
+        !sum as u16
+    }
+
+    pub fn with_checksum(mut self) -> Self {
+        self.checksum = self.calculate_checksum();
+        self
+    }
+
+    pub fn with_echo_request(
+        identifier: u16,
+        sequence: u16,
+        payload: Vec<u8>,
+    ) -> Result<Self, Icmpv6PacketBuildError> {
+        Ok(Self {
+            typ: 8,
+            code: 0,
+            checksum: 0,
+            message: Icmpv4Message::Echo {
+                identifier,
+                sequence,
+                payload,
+            },
+        })
+    }
+
+    pub fn with_echo_reply(
+        identifier: u16,
+        sequence: u16,
+        payload: Vec<u8>,
+    ) -> Result<Self, Icmpv6PacketBuildError> {
+        Ok(Self {
+            typ: 0,
+            code: 0,
+            checksum: 0,
+            message: Icmpv4Message::EchoReply {
+                identifier,
+                sequence,
+                payload,
+            },
+        })
+    }
+}
+
+impl TryFrom<&[u8]> for Icmpv4Packet {
+    type Error = PacketParseError;
+    fn try_from(b: &[u8]) -> Result<Self, Self::Error> {
+        Icmpv4Packet::parse(b)
     }
 }
 
