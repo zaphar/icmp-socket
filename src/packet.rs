@@ -340,8 +340,23 @@ impl std::fmt::Display for Icmpv6PacketBuildError {
     }
 }
 
+impl std::fmt::Display for PacketParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            PacketParseError::PacketTooSmall(c) => format!("Packet Too Small size: {}", c),
+            PacketParseError::UnrecognizedICMPType => "UnrecognizedIcmpType".to_owned(),
+        })
+    }
+}
+
 impl From<Icmpv6PacketBuildError> for std::io::Error {
     fn from(err: Icmpv6PacketBuildError) -> Self {
+        std::io::Error::new(std::io::ErrorKind::Other, format!("{}", err))
+    }
+}
+
+impl From<PacketParseError> for std::io::Error {
+    fn from(err: PacketParseError) -> Self {
         std::io::Error::new(std::io::ErrorKind::Other, format!("{}", err))
     }
 }

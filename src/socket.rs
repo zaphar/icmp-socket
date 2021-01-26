@@ -108,10 +108,11 @@ impl IcmpSocket6 {
         Ok(())
     }
    
-    // TODO(jwall): This should return a packet not bytes.
-    pub fn rcv_from(&self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let (read_count, _addr) = self.inner.recv_from(buf)?;
-        Ok(read_count)
+    pub fn rcv_from(&self) -> std::io::Result<Icmpv6Packet> {
+        let mut buf = vec![0; 512];
+        let (read_count, _addr) = self.inner.recv_from(&mut buf)?;
+        let pkt = Icmpv6Packet::parse(&buf[0..read_count])?;
+        Ok(pkt)
     }
 }
 

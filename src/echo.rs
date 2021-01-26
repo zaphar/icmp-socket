@@ -98,7 +98,6 @@ impl From<IcmpSocket4> for EchoSocket4 {
 
 pub struct EchoSocket6 {
     sequence: u16,
-    buf: Vec<u8>,
     inner: IcmpSocket6,
 }
 
@@ -106,7 +105,7 @@ impl EchoSocket6 {
 
     pub fn new(sock: IcmpSocket6) -> Self {
         // TODO(jwall): How to set ICMPv6 filters.
-        EchoSocket6{inner:sock, sequence: 0, buf: Vec::with_capacity(512)}
+        EchoSocket6{inner:sock, sequence: 0}
     }
 
     pub fn set_max_hops(&mut self, hops: u32) {
@@ -121,12 +120,8 @@ impl EchoSocket6 {
     }
 
     pub fn recv_ping(&mut self) -> std::io::Result<EchoResponse> {
-        self.buf.resize(512, 0);
-        let bytes_read = self.inner.rcv_from(&mut self.buf)?;
-        match Icmpv6Packet::parse(&self.buf[0..bytes_read]) {
-            Ok(p) => return Ok(p.try_into()?),
-            Err(e) => return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Malformed ICMP Response: {:?}", e))),
-        };
+        let pkt = self.inner.rcv_from()?;
+        Ok(pkt.try_into()?)
     }
 }
 
