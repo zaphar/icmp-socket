@@ -11,18 +11,20 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use std::net::Ipv6Addr;
+use std::net::Ipv4Addr;
 
 use icmp_socket::socket::IcmpSocket;
 use icmp_socket::*;
 
 pub fn main() {
-    let mut socket6 = IcmpSocket6::new().unwrap();
-    socket6.bind("::1".parse::<Ipv6Addr>().unwrap()).unwrap();
-    let mut echo_socket = echo::EchoSocket::new(socket6);
+    let mut socket4 = IcmpSocket4::new().unwrap();
+    socket4
+        .bind("0.0.0.0".parse::<Ipv4Addr>().unwrap())
+        .unwrap();
+    let mut echo_socket = echo::EchoSocket::new(socket4);
     echo_socket
         .send_ping(
-            "::1".parse::<Ipv6Addr>().unwrap(),
+            "127.0.0.1".parse::<Ipv4Addr>().unwrap(),
             42,
             &[
                 0x20, 0x20, 0x75, 0x73, 0x74, 0x20, 0x61, 0x20, 0x66, 0x6c, 0x65, 0x73, 0x68, 0x20,
@@ -32,9 +34,6 @@ pub fn main() {
             ],
         )
         .unwrap();
-    // TODO(jwall): The first packet we recieve will be the one we sent.
-    // We need to implement packet filtering for the socket.
-    let _ = echo_socket.recv_ping();
     let resp = echo_socket.recv_ping().unwrap();
     println!(
         "seq: {}, identifier: {} payload: {}",

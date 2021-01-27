@@ -16,6 +16,6 @@ pub mod echo;
 pub mod packet;
 pub mod socket;
 
-pub use echo::{EchoSocket4, EchoSocket6};
+pub use echo::EchoSocket;
 pub use packet::{Icmpv4Message, Icmpv4Packet, Icmpv6Message, Icmpv6Packet};
 pub use socket::{IcmpSocket, IcmpSocket4, IcmpSocket6};

@@ -42,6 +42,16 @@ fn sum_big_endian_words(bs: &[u8]) -> u32 {
     return sum;
 }
 
+pub trait WithEchoRequest {
+    type Packet;
+
+    fn with_echo_request(
+        identifier: u16,
+        sequence: u16,
+        payload: Vec<u8>,
+    ) -> Result<Self::Packet, IcmpPacketBuildError>;
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Icmpv6Message {
     // NOTE(JWALL): All of the below integers should be parsed as big endian on the
@@ -148,7 +158,7 @@ pub struct Icmpv6Packet {
 #[derive(Debug)]
 pub enum PacketParseError {
     PacketTooSmall(usize),
-    UnrecognizedICMPType,
+    UnrecognizedICMPType(u8),
 }
 
 impl Icmpv6Packet {
@@ -193,7 +203,7 @@ impl Icmpv6Packet {
                 sequence: BigEndian::read_u16(&bytes[6..8]),
                 payload: payload,
             },
-            _ => return Err(PacketParseError::UnrecognizedICMPType),
+            t => return Err(PacketParseError::UnrecognizedICMPType(t)),
         };
         return Ok(Icmpv6Packet {
             typ: typ,
@@ -249,9 +259,9 @@ impl Icmpv6Packet {
     }
 
     /// Construct a packet for Destination Unreachable messages.
-    pub fn with_unreachable(code: u8, packet: Vec<u8>) -> Result<Self, Icmpv6PacketBuildError> {
+    pub fn with_unreachable(code: u8, packet: Vec<u8>) -> Result<Self, IcmpPacketBuildError> {
         if code > 6 {
-            return Err(Icmpv6PacketBuildError::InvalidCode(code));
+            return Err(IcmpPacketBuildError::InvalidCode(code));
         }
         Ok(Self {
             typ: 1,
@@ -267,7 +277,7 @@ impl Icmpv6Packet {
     }
 
     /// Construct a packet for Packet Too Big messages.
-    pub fn with_packet_too_big(mtu: u32, packet: Vec<u8>) -> Result<Self, Icmpv6PacketBuildError> {
+    pub fn with_packet_too_big(mtu: u32, packet: Vec<u8>) -> Result<Self, IcmpPacketBuildError> {
         Ok(Self {
             typ: 2,
             code: 0,
@@ -282,9 +292,9 @@ impl Icmpv6Packet {
     }
 
     /// Construct a packet for Time Exceeded messages.
-    pub fn with_time_exceeded(code: u8, packet: Vec<u8>) -> Result<Self, Icmpv6PacketBuildError> {
+    pub fn with_time_exceeded(code: u8, packet: Vec<u8>) -> Result<Self, IcmpPacketBuildError> {
         if code > 1 {
-            return Err(Icmpv6PacketBuildError::InvalidCode(code));
+            return Err(IcmpPacketBuildError::InvalidCode(code));
         }
         Ok(Self {
             typ: 3,
@@ -304,9 +314,9 @@ impl Icmpv6Packet {
         code: u8,
         pointer: u32,
         packet: Vec<u8>,
-    ) -> Result<Self, Icmpv6PacketBuildError> {
+    ) -> Result<Self, IcmpPacketBuildError> {
         if code > 1 {
-            return Err(Icmpv6PacketBuildError::InvalidCode(code));
+            return Err(IcmpPacketBuildError::InvalidCode(code));
         }
         Ok(Self {
             typ: 4,
@@ -319,35 +329,38 @@ impl Icmpv6Packet {
         })
     }
 
-    /// Construct a packet for Echo Request messages.
-    pub fn with_echo_request(
+    /// Construct a packet for Echo Reply messages.
+    pub fn with_echo_reply(
         identifier: u16,
         sequence: u16,
         payload: Vec<u8>,
-    ) -> Result<Self, Icmpv6PacketBuildError> {
+    ) -> Result<Self, IcmpPacketBuildError> {
         Ok(Self {
-            typ: 128,
+            typ: 129,
             code: 0,
             checksum: 0,
-            message: EchoRequest {
+            message: EchoReply {
                 identifier: identifier,
                 sequence: sequence,
                 payload: payload,
             },
         })
     }
+}
 
-    /// Construct a packet for Echo Reply messages.
-    pub fn with_echo_reply(
+impl WithEchoRequest for Icmpv6Packet {
+    type Packet = Icmpv6Packet;
+
+    fn with_echo_request(
         identifier: u16,
         sequence: u16,
         payload: Vec<u8>,
-    ) -> Result<Self, Icmpv6PacketBuildError> {
+    ) -> Result<Self::Packet, IcmpPacketBuildError> {
         Ok(Self {
-            typ: 129,
+            typ: 128,
             code: 0,
             checksum: 0,
-            message: EchoReply {
+            message: EchoRequest {
                 identifier: identifier,
                 sequence: sequence,
                 payload: payload,
@@ -364,12 +377,12 @@ impl TryFrom<&[u8]> for Icmpv6Packet {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Icmpv6PacketBuildError {
+pub enum IcmpPacketBuildError {
     InvalidCode(u8),
 }
-use Icmpv6PacketBuildError::InvalidCode;
+use IcmpPacketBuildError::InvalidCode;
 
-impl std::fmt::Display for Icmpv6PacketBuildError {
+impl std::fmt::Display for IcmpPacketBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -388,14 +401,14 @@ impl std::fmt::Display for PacketParseError {
             "{}",
             match self {
                 PacketParseError::PacketTooSmall(c) => format!("Packet Too Small size: {}", c),
-                PacketParseError::UnrecognizedICMPType => "UnrecognizedIcmpType".to_owned(),
+                PacketParseError::UnrecognizedICMPType(t) => format!("UnrecognizedIcmpType({})", t),
             }
         )
     }
 }
 
-impl From<Icmpv6PacketBuildError> for std::io::Error {
-    fn from(err: Icmpv6PacketBuildError) -> Self {
+impl From<IcmpPacketBuildError> for std::io::Error {
+    fn from(err: IcmpPacketBuildError) -> Self {
         std::io::Error::new(std::io::ErrorKind::Other, format!("{}", err))
     }
 }
@@ -596,12 +609,15 @@ pub struct Icmpv4Packet {
 
 impl Icmpv4Packet {
     pub fn parse<B: AsRef<[u8]>>(bytes: B) -> Result<Self, PacketParseError> {
-        let bytes = bytes.as_ref();
-        // NOTE(jwall): All ICMP packets are at least 8 bytes long.
-        let packet_len = bytes.len();
-        if packet_len < 8 {
-            return Err(PacketParseError::PacketTooSmall(bytes.len()));
+        let mut bytes = bytes.as_ref();
+        let mut packet_len = bytes.len();
+        if bytes.len() < 28 {
+            return Err(PacketParseError::PacketTooSmall(packet_len));
         }
+        // NOTE(jwall) Because we use raw sockets the first 20 bytes are the IPv4 header.
+        bytes = &bytes[20..];
+        // NOTE(jwall): All ICMP packets are at least 8 bytes long.
+        packet_len = bytes.len();
         let (typ, code, checksum) = (bytes[0], bytes[1], BigEndian::read_u16(&bytes[2..4]));
         let message = match typ {
             3 => Icmpv4Message::Unreachable {
@@ -638,8 +654,6 @@ impl Icmpv4Packet {
                 identifier: BigEndian::read_u16(&bytes[4..6]),
                 sequence: BigEndian::read_u16(&bytes[6..8]),
             },
-            // FIXME(jwall): Some of the below have size requirements larger than
-            // 8
             13 => {
                 if packet_len < 20 {
                     return Err(PacketParseError::PacketTooSmall(bytes.len()));
@@ -664,7 +678,10 @@ impl Icmpv4Packet {
                     transmit: BigEndian::read_u32(&bytes[16..20]),
                 }
             }
-            _ => return Err(PacketParseError::UnrecognizedICMPType),
+            t => {
+                dbg!(bytes);
+                return Err(PacketParseError::UnrecognizedICMPType(t));
+            }
         };
         return Ok(Icmpv4Packet {
             typ: typ,
@@ -679,8 +696,7 @@ impl Icmpv4Packet {
         let mut bytes = Vec::new();
         bytes.push(self.typ);
         bytes.push(self.code);
-        let mut buf = Vec::with_capacity(2);
-        buf.resize(2, 0);
+        let mut buf = vec![0; 2];
         BigEndian::write_u16(&mut buf, if with_checksum { self.checksum } else { 0 });
         bytes.append(&mut buf);
         bytes.append(&mut self.message.get_bytes());
@@ -709,12 +725,23 @@ impl Icmpv4Packet {
         self.checksum = self.calculate_checksum();
         self
     }
+}
 
-    pub fn with_echo_request(
+impl TryFrom<&[u8]> for Icmpv4Packet {
+    type Error = PacketParseError;
+    fn try_from(b: &[u8]) -> Result<Self, Self::Error> {
+        Icmpv4Packet::parse(b)
+    }
+}
+
+impl WithEchoRequest for Icmpv4Packet {
+    type Packet = Icmpv4Packet;
+
+    fn with_echo_request(
         identifier: u16,
         sequence: u16,
         payload: Vec<u8>,
-    ) -> Result<Self, Icmpv6PacketBuildError> {
+    ) -> Result<Self::Packet, IcmpPacketBuildError> {
         Ok(Self {
             typ: 8,
             code: 0,
@@ -726,34 +753,10 @@ impl Icmpv4Packet {
             },
         })
     }
-
-    pub fn with_echo_reply(
-        identifier: u16,
-        sequence: u16,
-        payload: Vec<u8>,
-    ) -> Result<Self, Icmpv6PacketBuildError> {
-        Ok(Self {
-            typ: 0,
-            code: 0,
-            checksum: 0,
-            message: Icmpv4Message::EchoReply {
-                identifier,
-                sequence,
-                payload,
-            },
-        })
-    }
-}
-
-impl TryFrom<&[u8]> for Icmpv4Packet {
-    type Error = PacketParseError;
-    fn try_from(b: &[u8]) -> Result<Self, Self::Error> {
-        Icmpv4Packet::parse(b)
-    }
 }
 
 #[cfg(test)]
-mod checksum_tests {
+mod tests {
     use super::*;
 
     #[test]
@@ -819,7 +822,7 @@ mod checksum_tests {
         let pkt = Icmpv6Packet::with_time_exceeded(2, vec![1, 2, 3, 4]);
         assert!(pkt.is_err());
         let e = pkt.unwrap_err();
-        assert_eq!(e, Icmpv6PacketBuildError::InvalidCode(2));
+        assert_eq!(e, IcmpPacketBuildError::InvalidCode(2));
     }
 
     #[test]
@@ -842,7 +845,7 @@ mod checksum_tests {
         let pkt = Icmpv6Packet::with_parameter_problem(3, 30, vec![1, 2, 3, 4]);
         assert!(pkt.is_err());
         let e = pkt.unwrap_err();
-        assert_eq!(e, Icmpv6PacketBuildError::InvalidCode(3));
+        assert_eq!(e, IcmpPacketBuildError::InvalidCode(3));
     }
 
     #[test]

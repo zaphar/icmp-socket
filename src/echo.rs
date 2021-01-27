@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use std::convert::{From, TryFrom, TryInto};
-use std::net::{Ipv4Addr, Ipv6Addr};
 
 use crate::{
-    packet::{Icmpv4Message, Icmpv4Packet, Icmpv6Message, Icmpv6Packet},
-    socket::{IcmpSocket, IcmpSocket4, IcmpSocket6},
+    packet::{Icmpv4Message, Icmpv4Packet, Icmpv6Message, Icmpv6Packet, WithEchoRequest},
+    socket::IcmpSocket,
 };
 
 #[derive(Debug)]
@@ -80,15 +79,21 @@ impl TryFrom<Icmpv4Packet> for EchoResponse {
     }
 }
 
-pub struct EchoSocket4 {
+pub struct EchoSocket<S> {
     sequence: u16,
-    inner: IcmpSocket4,
+    inner: S,
 }
 
 // TODO(jwall): Make this a trait
-impl EchoSocket4 {
-    pub fn new(sock: IcmpSocket4) -> Self {
-        EchoSocket4 {
+impl<S> EchoSocket<S>
+where
+    S: IcmpSocket,
+    S::PacketType: WithEchoRequest<Packet = S::PacketType>
+        + TryInto<EchoResponse, Error = std::io::Error>
+        + std::fmt::Debug,
+{
+    pub fn new(sock: S) -> Self {
+        EchoSocket {
             inner: sock,
             sequence: 0,
         }
@@ -100,12 +105,12 @@ impl EchoSocket4 {
 
     pub fn send_ping(
         &mut self,
-        dest: Ipv4Addr,
+        dest: S::AddrType,
         identifier: u16,
         payload: &[u8],
     ) -> std::io::Result<()> {
         let packet =
-            Icmpv4Packet::with_echo_request(identifier, self.sequence, payload.to_owned())?;
+            S::PacketType::with_echo_request(identifier, self.sequence, payload.to_owned())?;
         self.sequence += 1;
         self.inner.send_to(dest, packet)?;
         Ok(())
@@ -117,51 +122,14 @@ impl EchoSocket4 {
     }
 }
 
-impl From<IcmpSocket4> for EchoSocket4 {
-    fn from(sock: IcmpSocket4) -> Self {
-        EchoSocket4::new(sock)
-    }
-}
-
-pub struct EchoSocket6 {
-    sequence: u16,
-    inner: IcmpSocket6,
-}
-
-impl EchoSocket6 {
-    pub fn new(sock: IcmpSocket6) -> Self {
-        // TODO(jwall): How to set ICMPv6 filters.
-        EchoSocket6 {
-            inner: sock,
-            sequence: 0,
-        }
-    }
-
-    pub fn set_max_hops(&mut self, hops: u32) {
-        self.inner.set_max_hops(hops);
-    }
-
-    pub fn send_ping(
-        &mut self,
-        dest: Ipv6Addr,
-        identifier: u16,
-        payload: &[u8],
-    ) -> std::io::Result<()> {
-        let packet =
-            Icmpv6Packet::with_echo_request(identifier, self.sequence, payload.to_owned())?;
-        self.sequence += 1;
-        self.inner.send_to(dest, packet)?;
-        Ok(())
-    }
-
-    pub fn recv_ping(&mut self) -> std::io::Result<EchoResponse> {
-        let pkt = self.inner.rcv_from()?;
-        Ok(pkt.try_into()?)
-    }
-}
-
-impl From<IcmpSocket6> for EchoSocket6 {
-    fn from(sock: IcmpSocket6) -> Self {
-        EchoSocket6::new(sock)
+impl<S> From<S> for EchoSocket<S>
+where
+    S: IcmpSocket,
+    S::PacketType: WithEchoRequest<Packet = S::PacketType>
+        + TryInto<EchoResponse, Error = std::io::Error>
+        + std::fmt::Debug,
+{
+    fn from(sock: S) -> Self {
+        EchoSocket::new(sock)
     }
 }
