@@ -17,14 +17,15 @@ use icmp_socket::socket::IcmpSocket;
 use icmp_socket::*;
 
 pub fn main() {
+    let address = std::env::args().nth(1).unwrap_or("127.0.0.1".to_owned());
     let mut socket4 = IcmpSocket4::new().unwrap();
     socket4
-        .bind("0.0.0.0".parse::<Ipv4Addr>().unwrap())
+        .bind("127.0.0.1".parse::<Ipv4Addr>().unwrap())
         .unwrap();
     let mut echo_socket = echo::EchoSocket::new(socket4);
     echo_socket
         .send_ping(
-            "127.0.0.1".parse::<Ipv4Addr>().unwrap(),
+            address.parse::<Ipv4Addr>().unwrap(),
             42,
             &[
                 0x20, 0x20, 0x75, 0x73, 0x74, 0x20, 0x61, 0x20, 0x66, 0x6c, 0x65, 0x73, 0x68, 0x20,
