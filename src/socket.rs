@@ -33,7 +33,7 @@ pub trait IcmpSocket {
 
     fn send_to(&mut self, dest: Self::AddrType, packet: Self::PacketType) -> std::io::Result<()>;
 
-    fn rcv_from(&self) -> std::io::Result<Self::PacketType>;
+    fn rcv_from(&mut self) -> std::io::Result<Self::PacketType>;
 }
 
 pub struct Opts {
@@ -42,15 +42,19 @@ pub struct Opts {
 
 pub struct IcmpSocket4 {
     bound_to: Option<Ipv4Addr>,
+    buf: Vec<u8>,
     inner: Socket,
     opts: Opts,
 }
 
 impl IcmpSocket4 {
     pub fn new() -> std::io::Result<Self> {
+        let socket = Socket::new(Domain::ipv4(), Type::raw(), Some(Protocol::icmpv4()))?;
+        socket.set_recv_buffer_size(512)?;
         Ok(Self {
             bound_to: None,
-            inner: Socket::new(Domain::ipv4(), Type::raw(), Some(Protocol::icmpv4()))?,
+            inner: socket,
+            buf: vec![0; 512],
             opts: Opts { hops: 50 },
         })
     }
@@ -75,29 +79,34 @@ impl IcmpSocket for IcmpSocket4 {
     fn send_to(&mut self, dest: Self::AddrType, packet: Self::PacketType) -> std::io::Result<()> {
         let dest = ip_to_socket(&IpAddr::V4(dest));
         self.inner.set_ttl(self.opts.hops)?;
-        self.inner
-            .send_to(&packet.get_bytes(true), &(dest.into()))?;
+        self.inner.send_to(
+            dbg!(&packet.with_checksum().get_bytes(true)),
+            &(dbg!(dest.into())),
+        )?;
         Ok(())
     }
 
-    fn rcv_from(&self) -> std::io::Result<Self::PacketType> {
-        let mut buf = vec![0; 512];
-        let (read_count, _addr) = self.inner.recv_from(&mut buf)?;
-        Ok(buf[0..read_count].try_into()?)
+    fn rcv_from(&mut self) -> std::io::Result<Self::PacketType> {
+        let (read_count, _addr) = dbg!(self.inner.recv_from(&mut self.buf)?);
+        Ok(self.buf[0..read_count].try_into()?)
     }
 }
 
 pub struct IcmpSocket6 {
     bound_to: Option<Ipv6Addr>,
     inner: Socket,
+    buf: Vec<u8>,
     opts: Opts,
 }
 
 impl IcmpSocket6 {
     pub fn new() -> std::io::Result<Self> {
+        let socket = Socket::new(Domain::ipv6(), Type::raw(), Some(Protocol::icmpv6()))?;
+        socket.set_recv_buffer_size(512)?;
         Ok(Self {
             bound_to: None,
-            inner: Socket::new(Domain::ipv6(), Type::raw(), Some(Protocol::icmpv6()))?,
+            inner: socket,
+            buf: vec![0; 512],
             opts: Opts { hops: 50 },
         })
     }
@@ -141,10 +150,9 @@ impl IcmpSocket for IcmpSocket6 {
         Ok(())
     }
 
-    fn rcv_from(&self) -> std::io::Result<Self::PacketType> {
-        let mut buf = vec![0; 512];
-        let (read_count, _addr) = self.inner.recv_from(&mut buf)?;
-        Ok(buf[0..read_count].try_into()?)
+    fn rcv_from(&mut self) -> std::io::Result<Self::PacketType> {
+        let (read_count, _addr) = self.inner.recv_from(&mut self.buf)?;
+        Ok(self.buf[0..read_count].try_into()?)
     }
 }
 
