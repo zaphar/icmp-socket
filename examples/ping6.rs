@@ -19,7 +19,7 @@ use icmp_socket::*;
 pub fn main() {
     let address = std::env::args().nth(1).unwrap_or("::1".to_owned());
     let mut socket6 = IcmpSocket6::new().unwrap();
-    socket6.bind("::1".parse::<Ipv6Addr>().unwrap()).unwrap();
+    socket6.bind("::0".parse::<Ipv6Addr>().unwrap()).unwrap();
     let mut echo_socket = echo::EchoSocket::new(socket6);
     echo_socket
         .send_ping(

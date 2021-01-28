@@ -79,10 +79,8 @@ impl IcmpSocket for IcmpSocket4 {
     fn send_to(&mut self, dest: Self::AddrType, packet: Self::PacketType) -> std::io::Result<()> {
         let dest = ip_to_socket(&IpAddr::V4(dest));
         self.inner.set_ttl(self.opts.hops)?;
-        self.inner.send_to(
-            dbg!(&packet.with_checksum().get_bytes(true)),
-            &(dbg!(dest.into())),
-        )?;
+        self.inner
+            .send_to(&packet.with_checksum().get_bytes(true), &(dest.into()))?;
         Ok(())
     }
 

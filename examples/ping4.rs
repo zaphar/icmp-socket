@@ -20,7 +20,7 @@ pub fn main() {
     let address = std::env::args().nth(1).unwrap_or("127.0.0.1".to_owned());
     let mut socket4 = IcmpSocket4::new().unwrap();
     socket4
-        .bind("127.0.0.1".parse::<Ipv4Addr>().unwrap())
+        .bind("0.0.0.0".parse::<Ipv4Addr>().unwrap())
         .unwrap();
     let mut echo_socket = echo::EchoSocket::new(socket4);
     echo_socket
