@@ -15,7 +15,7 @@
 use std::convert::{Into, TryFrom, TryInto};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
-use socket2::{Domain, Protocol, Socket, Type};
+use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 
 use crate::packet::{Icmpv4Packet, Icmpv6Packet};
 
@@ -33,7 +33,7 @@ pub trait IcmpSocket {
 
     fn send_to(&mut self, dest: Self::AddrType, packet: Self::PacketType) -> std::io::Result<()>;
 
-    fn rcv_from(&mut self) -> std::io::Result<Self::PacketType>;
+    fn rcv_from(&mut self) -> std::io::Result<(Self::PacketType, SockAddr)>;
 }
 
 pub struct Opts {
@@ -84,9 +84,9 @@ impl IcmpSocket for IcmpSocket4 {
         Ok(())
     }
 
-    fn rcv_from(&mut self) -> std::io::Result<Self::PacketType> {
-        let (read_count, _addr) = dbg!(self.inner.recv_from(&mut self.buf)?);
-        Ok(self.buf[0..read_count].try_into()?)
+    fn rcv_from(&mut self) -> std::io::Result<(Self::PacketType, SockAddr)> {
+        let (read_count, addr) = self.inner.recv_from(&mut self.buf)?;
+        Ok((self.buf[0..read_count].try_into()?, addr))
     }
 }
 
@@ -148,9 +148,9 @@ impl IcmpSocket for IcmpSocket6 {
         Ok(())
     }
 
-    fn rcv_from(&mut self) -> std::io::Result<Self::PacketType> {
-        let (read_count, _addr) = self.inner.recv_from(&mut self.buf)?;
-        Ok(self.buf[0..read_count].try_into()?)
+    fn rcv_from(&mut self) -> std::io::Result<(Self::PacketType, SockAddr)> {
+        let (read_count, addr) = self.inner.recv_from(&mut self.buf)?;
+        Ok((self.buf[0..read_count].try_into()?, addr))
     }
 }
 

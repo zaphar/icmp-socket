@@ -35,7 +35,8 @@ pub fn main() {
             ],
         )
         .unwrap();
-    let resp = echo_socket.recv_ping().unwrap();
+    let _ = echo_socket.recv_ping();
+    let (resp, _addr) = echo_socket.recv_ping().unwrap();
     println!(
         "seq: {}, identifier: {} payload: {}",
         resp.sequence,

@@ -13,6 +13,8 @@
 // limitations under the License.
 use std::convert::{From, TryFrom, TryInto};
 
+use socket2::SockAddr;
+
 use crate::{
     packet::{Icmpv4Message, Icmpv4Packet, Icmpv6Message, Icmpv6Packet, WithEchoRequest},
     socket::IcmpSocket,
@@ -116,9 +118,9 @@ where
         Ok(())
     }
 
-    pub fn recv_ping(&mut self) -> std::io::Result<EchoResponse> {
-        let packet = self.inner.rcv_from()?;
-        Ok(packet.try_into()?)
+    pub fn recv_ping(&mut self) -> std::io::Result<(EchoResponse, SockAddr)> {
+        let (packet, addr) = self.inner.rcv_from()?;
+        Ok((packet.try_into()?, addr))
     }
 }
 

@@ -36,7 +36,7 @@ pub fn main() {
     // TODO(jwall): The first packet we recieve will be the one we sent.
     // We need to implement packet filtering for the socket.
     let _ = echo_socket.recv_ping();
-    let resp = echo_socket.recv_ping().unwrap();
+    let (resp, _addr) = echo_socket.recv_ping().unwrap();
     println!(
         "seq: {}, identifier: {} payload: {}",
         resp.sequence,
