@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod echo;
 pub mod packet;
 pub mod socket;
 
-pub use echo::EchoSocket;
 pub use packet::{Icmpv4Message, Icmpv4Packet, Icmpv6Message, Icmpv6Packet};
 pub use socket::{IcmpSocket, IcmpSocket4, IcmpSocket6};

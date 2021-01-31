@@ -12,8 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::convert::{Into, TryFrom, TryInto};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::{
+    convert::{Into, TryFrom, TryInto},
+    time::Duration,
+};
 
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 
@@ -34,6 +37,11 @@ pub trait IcmpSocket {
     fn send_to(&mut self, dest: Self::AddrType, packet: Self::PacketType) -> std::io::Result<()>;
 
     fn rcv_from(&mut self) -> std::io::Result<(Self::PacketType, SockAddr)>;
+
+    fn rcv_with_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> std::io::Result<(Self::PacketType, SockAddr)>;
 }
 
 pub struct Opts {
@@ -85,6 +93,16 @@ impl IcmpSocket for IcmpSocket4 {
     }
 
     fn rcv_from(&mut self) -> std::io::Result<(Self::PacketType, SockAddr)> {
+        self.inner.set_read_timeout(None);
+        let (read_count, addr) = self.inner.recv_from(&mut self.buf)?;
+        Ok((self.buf[0..read_count].try_into()?, addr))
+    }
+
+    fn rcv_with_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> std::io::Result<(Self::PacketType, SockAddr)> {
+        self.inner.set_read_timeout(Some(timeout));
         let (read_count, addr) = self.inner.recv_from(&mut self.buf)?;
         Ok((self.buf[0..read_count].try_into()?, addr))
     }
@@ -149,6 +167,16 @@ impl IcmpSocket for IcmpSocket6 {
     }
 
     fn rcv_from(&mut self) -> std::io::Result<(Self::PacketType, SockAddr)> {
+        self.inner.set_read_timeout(None);
+        let (read_count, addr) = self.inner.recv_from(&mut self.buf)?;
+        Ok((self.buf[0..read_count].try_into()?, addr))
+    }
+
+    fn rcv_with_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> std::io::Result<(Self::PacketType, SockAddr)> {
+        self.inner.set_read_timeout(Some(timeout));
         let (read_count, addr) = self.inner.recv_from(&mut self.buf)?;
         Ok((self.buf[0..read_count].try_into()?, addr))
     }
