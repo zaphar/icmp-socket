@@ -30,6 +30,8 @@ pub trait IcmpSocket {
     type AddrType;
     type PacketType;
 
+    fn set_timeout(&mut self, timeout: Duration) -> std::io::Result<()>;
+
     fn set_max_hops(&mut self, hops: u32);
 
     fn bind<A: Into<Self::AddrType>>(&mut self, addr: A) -> std::io::Result<()>;
@@ -37,11 +39,6 @@ pub trait IcmpSocket {
     fn send_to(&mut self, dest: Self::AddrType, packet: Self::PacketType) -> std::io::Result<()>;
 
     fn rcv_from(&mut self) -> std::io::Result<(Self::PacketType, SockAddr)>;
-
-    fn rcv_with_timeout(
-        &mut self,
-        timeout: Duration,
-    ) -> std::io::Result<(Self::PacketType, SockAddr)>;
 }
 
 pub struct Opts {
@@ -98,13 +95,8 @@ impl IcmpSocket for IcmpSocket4 {
         Ok((self.buf[0..read_count].try_into()?, addr))
     }
 
-    fn rcv_with_timeout(
-        &mut self,
-        timeout: Duration,
-    ) -> std::io::Result<(Self::PacketType, SockAddr)> {
-        self.inner.set_read_timeout(Some(timeout))?;
-        let (read_count, addr) = self.inner.recv_from(&mut self.buf)?;
-        Ok((self.buf[0..read_count].try_into()?, addr))
+    fn set_timeout(&mut self, timeout: Duration) -> std::io::Result<()> {
+        self.inner.set_read_timeout(Some(timeout))
     }
 }
 
@@ -172,13 +164,8 @@ impl IcmpSocket for IcmpSocket6 {
         Ok((self.buf[0..read_count].try_into()?, addr))
     }
 
-    fn rcv_with_timeout(
-        &mut self,
-        timeout: Duration,
-    ) -> std::io::Result<(Self::PacketType, SockAddr)> {
-        self.inner.set_read_timeout(Some(timeout))?;
-        let (read_count, addr) = self.inner.recv_from(&mut self.buf)?;
-        Ok((self.buf[0..read_count].try_into()?, addr))
+    fn set_timeout(&mut self, timeout: Duration) -> std::io::Result<()> {
+        self.inner.set_read_timeout(Some(timeout))
     }
 }
 

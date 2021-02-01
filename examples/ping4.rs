@@ -74,11 +74,12 @@ pub fn main() {
         socket4
             .send_to(address.parse::<Ipv4Addr>().unwrap(), packet)
             .unwrap();
+        socket4.set_timeout(Duration::from_secs(1)).unwrap();
         loop {
-            let (resp, sock_addr) = match socket4.rcv_with_timeout(Duration::from_secs(1)) {
+            let (resp, sock_addr) = match socket4.rcv_from() {
                 Ok(tpl) => tpl,
                 Err(e) => {
-                    //eprintln!("{:?}", e);
+                    eprintln!("{:?}", e);
                     break;
                 }
             };

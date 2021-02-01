@@ -72,11 +72,12 @@ pub fn main() {
         socket6
             .send_to(address.parse::<Ipv6Addr>().unwrap(), packet)
             .unwrap();
+        socket6.set_timeout(Duration::from_secs(1)).unwrap();
         loop {
-            let (resp, sock_addr) = match socket6.rcv_with_timeout(Duration::from_secs(1)) {
+            let (resp, sock_addr) = match socket6.rcv_from() {
                 Ok(tpl) => tpl,
                 Err(e) => {
-                    //eprintln!("{:?}", e);
+                    eprintln!("{:?}", e);
                     break;
                 }
             };
