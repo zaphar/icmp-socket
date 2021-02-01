@@ -42,6 +42,7 @@ fn sum_big_endian_words(bs: &[u8]) -> u32 {
     return sum;
 }
 
+/// Construct a packet for the EchoRequest messages.
 pub trait WithEchoRequest {
     type Packet;
 
@@ -52,6 +53,44 @@ pub trait WithEchoRequest {
     ) -> Result<Self::Packet, IcmpPacketBuildError>;
 }
 
+/// Construct a packet for Echo Reply messages.
+pub trait WithEchoReply {
+    type Packet;
+
+    fn with_echo_reply(
+        identifier: u16,
+        sequence: u16,
+        payload: Vec<u8>,
+    ) -> Result<Self::Packet, IcmpPacketBuildError>;
+}
+
+/// Construct a packet for Destination Unreachable messages.
+pub trait WithUnreachable {
+    type Packet;
+
+    fn with_unreachable(code: u8, packet: Vec<u8>) -> Result<Self::Packet, IcmpPacketBuildError>;
+}
+
+/// Construct a packet for Parameter Problem messages.
+pub trait WithParameterProblem {
+    type Packet;
+    type Pointer;
+
+    fn with_parameter_problem(
+        code: u8,
+        pointer: Self::Pointer,
+        packet: Vec<u8>,
+    ) -> Result<Self::Packet, IcmpPacketBuildError>;
+}
+
+/// Construct a packet for Time Exceeded messages.
+pub trait WithTimeExceeded {
+    type Packet;
+
+    fn with_time_exceeded(code: u8, packet: Vec<u8>) -> Result<Self::Packet, IcmpPacketBuildError>;
+}
+
+/// The possible Icmpv6 Message types.
 #[derive(Debug, PartialEq)]
 pub enum Icmpv6Message {
     // NOTE(JWALL): All of the below integers should be parsed as big endian on the
@@ -94,6 +133,7 @@ use Icmpv6Message::{
 };
 
 impl Icmpv6Message {
+    /// Get this Icmpv6Message serialized to bytes.
     pub fn get_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         match self {
@@ -155,9 +195,12 @@ pub struct Icmpv6Packet {
     pub message: Icmpv6Message,
 }
 
+/// Error type returned by parsing the ICMP packets.
 #[derive(Debug)]
 pub enum PacketParseError {
+    /// Not enough bytes to properly parse the packet from.
     PacketTooSmall(usize),
+    /// An unrecognized ICMP type.
     UnrecognizedICMPType(u8),
 }
 
@@ -258,24 +301,6 @@ impl Icmpv6Packet {
         self
     }
 
-    /// Construct a packet for Destination Unreachable messages.
-    pub fn with_unreachable(code: u8, packet: Vec<u8>) -> Result<Self, IcmpPacketBuildError> {
-        if code > 6 {
-            return Err(IcmpPacketBuildError::InvalidCode(code));
-        }
-        Ok(Self {
-            typ: 1,
-            code: code,
-            checksum: 0,
-            // TODO(jwall): Should we enforce that the packet isn't too big?
-            // It is not supposed to be larger than the minimum IPv6 MTU
-            message: Unreachable {
-                _unused: 0,
-                invoking_packet: packet,
-            },
-        })
-    }
-
     /// Construct a packet for Packet Too Big messages.
     pub fn with_packet_too_big(mtu: u32, packet: Vec<u8>) -> Result<Self, IcmpPacketBuildError> {
         Ok(Self {
@@ -287,62 +312,6 @@ impl Icmpv6Packet {
             message: PacketTooBig {
                 mtu: mtu,
                 invoking_packet: packet,
-            },
-        })
-    }
-
-    /// Construct a packet for Time Exceeded messages.
-    pub fn with_time_exceeded(code: u8, packet: Vec<u8>) -> Result<Self, IcmpPacketBuildError> {
-        if code > 1 {
-            return Err(IcmpPacketBuildError::InvalidCode(code));
-        }
-        Ok(Self {
-            typ: 3,
-            code: code,
-            checksum: 0,
-            // TODO(jwall): Should we enforce that the packet isn't too big?
-            // It is not supposed to be larger than the minimum IPv6 MTU
-            message: TimeExceeded {
-                _unused: 0,
-                invoking_packet: packet,
-            },
-        })
-    }
-
-    /// Construct a packet for Parameter Problem messages.
-    pub fn with_parameter_problem(
-        code: u8,
-        pointer: u32,
-        packet: Vec<u8>,
-    ) -> Result<Self, IcmpPacketBuildError> {
-        if code > 1 {
-            return Err(IcmpPacketBuildError::InvalidCode(code));
-        }
-        Ok(Self {
-            typ: 4,
-            code: code,
-            checksum: 0,
-            message: ParameterProblem {
-                pointer: pointer,
-                invoking_packet: packet,
-            },
-        })
-    }
-
-    /// Construct a packet for Echo Reply messages.
-    pub fn with_echo_reply(
-        identifier: u16,
-        sequence: u16,
-        payload: Vec<u8>,
-    ) -> Result<Self, IcmpPacketBuildError> {
-        Ok(Self {
-            typ: 129,
-            code: 0,
-            checksum: 0,
-            message: EchoReply {
-                identifier: identifier,
-                sequence: sequence,
-                payload: payload,
             },
         })
     }
@@ -369,6 +338,93 @@ impl WithEchoRequest for Icmpv6Packet {
     }
 }
 
+impl WithEchoReply for Icmpv6Packet {
+    type Packet = Icmpv6Packet;
+
+    fn with_echo_reply(
+        identifier: u16,
+        sequence: u16,
+        payload: Vec<u8>,
+    ) -> Result<Self, IcmpPacketBuildError> {
+        Ok(Self {
+            typ: 129,
+            code: 0,
+            checksum: 0,
+            message: EchoReply {
+                identifier: identifier,
+                sequence: sequence,
+                payload: payload,
+            },
+        })
+    }
+}
+
+impl WithUnreachable for Icmpv6Packet {
+    type Packet = Icmpv6Packet;
+
+    fn with_unreachable(code: u8, packet: Vec<u8>) -> Result<Self, IcmpPacketBuildError> {
+        if code > 6 {
+            return Err(IcmpPacketBuildError::InvalidCode(code));
+        }
+        Ok(Self {
+            typ: 1,
+            code: code,
+            checksum: 0,
+            // TODO(jwall): Should we enforce that the packet isn't too big?
+            // It is not supposed to be larger than the minimum IPv6 MTU
+            message: Unreachable {
+                _unused: 0,
+                invoking_packet: packet,
+            },
+        })
+    }
+}
+
+impl WithParameterProblem for Icmpv6Packet {
+    type Packet = Icmpv6Packet;
+    type Pointer = u32;
+
+    fn with_parameter_problem(
+        code: u8,
+        pointer: Self::Pointer,
+        packet: Vec<u8>,
+    ) -> Result<Self, IcmpPacketBuildError> {
+        if code > 1 {
+            return Err(IcmpPacketBuildError::InvalidCode(code));
+        }
+        Ok(Self {
+            typ: 4,
+            code: code,
+            checksum: 0,
+            message: ParameterProblem {
+                pointer: pointer,
+                invoking_packet: packet,
+            },
+        })
+    }
+}
+
+impl WithTimeExceeded for Icmpv6Packet {
+    type Packet = Icmpv6Packet;
+
+    fn with_time_exceeded(code: u8, packet: Vec<u8>) -> Result<Self, IcmpPacketBuildError> {
+        if code > 1 {
+            return Err(IcmpPacketBuildError::InvalidCode(code));
+        }
+        Ok(Self {
+            typ: 3,
+            code: code,
+            checksum: 0,
+            // TODO(jwall): Should we enforce that the packet isn't too big?
+            // It is not supposed to be larger than the minimum IPv6 MTU
+            message: TimeExceeded {
+                _unused: 0,
+                invoking_packet: packet,
+            },
+        })
+    }
+}
+
 impl TryFrom<&[u8]> for Icmpv6Packet {
     type Error = PacketParseError;
     fn try_from(b: &[u8]) -> Result<Self, Self::Error> {
@@ -376,8 +432,10 @@ impl TryFrom<&[u8]> for Icmpv6Packet {
     }
 }
 
+/// Errors returned by constructors for a given packet.
 #[derive(Debug, PartialEq)]
 pub enum IcmpPacketBuildError {
+    /// The code passed in for the payload was invalid for the message type.
     InvalidCode(u8),
 }
 use IcmpPacketBuildError::InvalidCode;
@@ -419,6 +477,7 @@ impl From<PacketParseError> for std::io::Error {
     }
 }
 
+/// The various messages for an Icmpv4 packet.
 #[derive(Debug)]
 pub enum Icmpv4Message {
     Unreachable {
@@ -488,6 +547,7 @@ pub enum Icmpv4Message {
 }
 
 impl Icmpv4Message {
+    /// Get this Icmpv4Message serialized as bytes.
     pub fn get_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(20);
         match self {
@@ -599,6 +659,7 @@ impl Icmpv4Message {
     }
 }
 
+/// An Icmpv4 Packet.
 #[derive(Debug)]
 pub struct Icmpv4Packet {
     pub typ: u8,
@@ -608,6 +669,7 @@ pub struct Icmpv4Packet {
 }
 
 impl Icmpv4Packet {
+    /// Parse an Icmpv4Packet from bytes.
     pub fn parse<B: AsRef<[u8]>>(bytes: B) -> Result<Self, PacketParseError> {
         let mut bytes = bytes.as_ref();
         let mut packet_len = bytes.len();
@@ -721,6 +783,7 @@ impl Icmpv4Packet {
         !sum as u16
     }
 
+    /// Populate the checksum field of this Packet.
     pub fn with_checksum(mut self) -> Self {
         self.checksum = self.calculate_checksum();
         self
@@ -750,6 +813,69 @@ impl WithEchoRequest for Icmpv4Packet {
                 identifier,
                 sequence,
                 payload,
+            },
+        })
+    }
+}
+
+impl WithUnreachable for Icmpv4Packet {
+    type Packet = Icmpv4Packet;
+
+    fn with_unreachable(code: u8, packet: Vec<u8>) -> Result<Self::Packet, IcmpPacketBuildError> {
+        if code > 5 {
+            return Err(IcmpPacketBuildError::InvalidCode(code));
+        }
+        Ok(Self {
+            typ: 3,
+            code: code,
+            checksum: 0,
+            message: Icmpv4Message::Unreachable {
+                padding: 0,
+                header: packet,
+            },
+        })
+    }
+}
+
+impl WithParameterProblem for Icmpv4Packet {
+    type Packet = Icmpv4Packet;
+    type Pointer = u8;
+
+    fn with_parameter_problem(
+        code: u8,
+        pointer: Self::Pointer,
+        packet: Vec<u8>,
+    ) -> Result<Self::Packet, IcmpPacketBuildError> {
+        if code != 0 {
+            return Err(IcmpPacketBuildError::InvalidCode(code));
+        }
+        Ok(Self {
+            typ: 12,
+            code: code,
+            checksum: 0,
+            message: Icmpv4Message::ParameterProblem {
+                pointer: pointer,
+                padding: (0, 0),
+                header: packet,
+            },
+        })
+    }
+}
+
+impl WithTimeExceeded for Icmpv4Packet {
+    type Packet = Icmpv4Packet;
+
+    fn with_time_exceeded(code: u8, packet: Vec<u8>) -> Result<Self::Packet, IcmpPacketBuildError> {
+        if code > 1 {
+            return Err(IcmpPacketBuildError::InvalidCode(code));
+        }
+        Ok(Self {
+            typ: 11,
+            code: code,
+            checksum: 0,
+            message: Icmpv4Message::TimeExceeded {
+                padding: 0,
+                header: packet,
             },
         })
     }

@@ -26,25 +26,37 @@ fn ip_to_socket(ip: &IpAddr) -> SocketAddr {
     SocketAddr::new(*ip, 0)
 }
 
+/// Trait for an IcmpSocket implemented by Icmpv4Socket and Icmpv6Socket.
 pub trait IcmpSocket {
+    /// The type of address this socket operates on.
     type AddrType;
+    /// The type of packet this socket handles.
     type PacketType;
 
+    /// Sets the timeout on the socket for rcv_from. A value of 0 will cause
+    /// rcv_from to block.
     fn set_timeout(&mut self, timeout: Duration) -> std::io::Result<()>;
 
+    /// Sets the ttl for packets sent on this socket. Controls the number of
+    /// hops the packet will be allowed to traverse.
     fn set_max_hops(&mut self, hops: u32);
 
+    /// Binds this socket to an address.
     fn bind<A: Into<Self::AddrType>>(&mut self, addr: A) -> std::io::Result<()>;
 
+    /// Sends the packet to the given destination.
     fn send_to(&mut self, dest: Self::AddrType, packet: Self::PacketType) -> std::io::Result<()>;
 
+    /// Receive a packet on this socket.
     fn rcv_from(&mut self) -> std::io::Result<(Self::PacketType, SockAddr)>;
 }
 
+/// Options for this socket.
 pub struct Opts {
     hops: u32,
 }
 
+/// An ICMPv4 socket.
 pub struct IcmpSocket4 {
     bound_to: Option<Ipv4Addr>,
     buf: Vec<u8>,
@@ -53,6 +65,8 @@ pub struct IcmpSocket4 {
 }
 
 impl IcmpSocket4 {
+    /// Construct a new socket. The socket must be bound to an address using `bind_to`
+    /// before it can be used to send and receive packets.
     pub fn new() -> std::io::Result<Self> {
         let socket = Socket::new(Domain::ipv4(), Type::raw(), Some(Protocol::icmpv4()))?;
         socket.set_recv_buffer_size(512)?;
@@ -100,6 +114,7 @@ impl IcmpSocket for IcmpSocket4 {
     }
 }
 
+/// An Icmpv6 socket.
 pub struct IcmpSocket6 {
     bound_to: Option<Ipv6Addr>,
     inner: Socket,
@@ -108,6 +123,8 @@ pub struct IcmpSocket6 {
 }
 
 impl IcmpSocket6 {
+    /// Construct a new socket. The socket must be bound to an address using `bind_to`
+    /// before it can be used to send and receive packets.
     pub fn new() -> std::io::Result<Self> {
         let socket = Socket::new(Domain::ipv6(), Type::raw(), Some(Protocol::icmpv6()))?;
         socket.set_recv_buffer_size(512)?;
