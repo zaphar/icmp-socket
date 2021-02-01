@@ -93,7 +93,7 @@ impl IcmpSocket for IcmpSocket4 {
     }
 
     fn rcv_from(&mut self) -> std::io::Result<(Self::PacketType, SockAddr)> {
-        self.inner.set_read_timeout(None);
+        self.inner.set_read_timeout(None)?;
         let (read_count, addr) = self.inner.recv_from(&mut self.buf)?;
         Ok((self.buf[0..read_count].try_into()?, addr))
     }
@@ -102,7 +102,7 @@ impl IcmpSocket for IcmpSocket4 {
         &mut self,
         timeout: Duration,
     ) -> std::io::Result<(Self::PacketType, SockAddr)> {
-        self.inner.set_read_timeout(Some(timeout));
+        self.inner.set_read_timeout(Some(timeout))?;
         let (read_count, addr) = self.inner.recv_from(&mut self.buf)?;
         Ok((self.buf[0..read_count].try_into()?, addr))
     }
@@ -167,7 +167,7 @@ impl IcmpSocket for IcmpSocket6 {
     }
 
     fn rcv_from(&mut self) -> std::io::Result<(Self::PacketType, SockAddr)> {
-        self.inner.set_read_timeout(None);
+        self.inner.set_read_timeout(None)?;
         let (read_count, addr) = self.inner.recv_from(&mut self.buf)?;
         Ok((self.buf[0..read_count].try_into()?, addr))
     }
@@ -176,7 +176,7 @@ impl IcmpSocket for IcmpSocket6 {
         &mut self,
         timeout: Duration,
     ) -> std::io::Result<(Self::PacketType, SockAddr)> {
-        self.inner.set_read_timeout(Some(timeout));
+        self.inner.set_read_timeout(Some(timeout))?;
         let (read_count, addr) = self.inner.recv_from(&mut self.buf)?;
         Ok((self.buf[0..read_count].try_into()?, addr))
     }
