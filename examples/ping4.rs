@@ -83,7 +83,8 @@ pub fn main() {
                     break;
                 }
             };
-            if packet_handler(resp, send_time, *sock_addr.as_inet().unwrap().ip()).is_some() {
+            if packet_handler(resp, send_time, *sock_addr.as_socket_ipv4().unwrap().ip()).is_some()
+            {
                 std::thread::sleep(Duration::from_secs(1));
                 break;
             }
