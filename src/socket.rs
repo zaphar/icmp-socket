@@ -18,6 +18,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::{
     convert::{Into, TryFrom, TryInto},
+    mem::MaybeUninit,
     time::Duration,
 };
 
@@ -71,7 +72,7 @@ impl IcmpSocket4 {
     /// Construct a new socket. The socket must be bound to an address using `bind_to`
     /// before it can be used to send and receive packets.
     pub fn new() -> std::io::Result<Self> {
-        let socket = Socket::new(Domain::ipv4(), Type::raw(), Some(Protocol::icmpv4()))?;
+        let socket = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))?;
         socket.set_recv_buffer_size(512)?;
         Ok(Self {
             bound_to: None,
@@ -108,7 +109,12 @@ impl IcmpSocket for IcmpSocket4 {
 
     fn rcv_from(&mut self) -> std::io::Result<(Self::PacketType, SockAddr)> {
         self.inner.set_read_timeout(None)?;
-        let (read_count, addr) = self.inner.recv_from(&mut self.buf)?;
+        // NOTE(jwall): the `recv_from` implementation promises not to write uninitialised
+        // bytes to the `buf`fer, so this casting is safe.
+        // TODO(jwall): change to `Vec::spare_capacity_mut` when it stabilizes.
+        let mut buf =
+            unsafe { &mut *(self.buf.as_mut_slice() as *mut [u8] as *mut [MaybeUninit<u8>]) };
+        let (read_count, addr) = self.inner.recv_from(&mut buf)?;
         Ok((self.buf[0..read_count].try_into()?, addr))
     }
 
@@ -129,7 +135,7 @@ impl IcmpSocket6 {
     /// Construct a new socket. The socket must be bound to an address using `bind_to`
     /// before it can be used to send and receive packets.
     pub fn new() -> std::io::Result<Self> {
-        let socket = Socket::new(Domain::ipv6(), Type::raw(), Some(Protocol::icmpv6()))?;
+        let socket = Socket::new(Domain::IPV6, Type::RAW, Some(Protocol::ICMPV6))?;
         socket.set_recv_buffer_size(512)?;
         Ok(Self {
             bound_to: None,
@@ -180,7 +186,12 @@ impl IcmpSocket for IcmpSocket6 {
 
     fn rcv_from(&mut self) -> std::io::Result<(Self::PacketType, SockAddr)> {
         self.inner.set_read_timeout(None)?;
-        let (read_count, addr) = self.inner.recv_from(&mut self.buf)?;
+        // NOTE(jwall): the `recv_from` implementation promises not to write uninitialised
+        // bytes to the `buf`fer, so this casting is safe.
+        // TODO(jwall): change to `Vec::spare_capacity_mut` when it stabilizes.
+        let mut buf =
+            unsafe { &mut *(self.buf.as_mut_slice() as *mut [u8] as *mut [MaybeUninit<u8>]) };
+        let (read_count, addr) = self.inner.recv_from(&mut buf)?;
         Ok((self.buf[0..read_count].try_into()?, addr))
     }
 
