@@ -11,7 +11,10 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
+//! ICMP Socket implementations for both ICMP4 and ICMP6 protocols.
+//!
+//! There is a common IcmpSocket trait implemented for both the v4 and v6 protocols.
+//! The socket is associated to both an address type and packet type.
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::{
     convert::{Into, TryFrom, TryInto},

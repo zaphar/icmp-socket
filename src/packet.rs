@@ -11,6 +11,38 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//! Packet parsing and construction.
+//!
+//! Where possible we use traits to support a common API for constructing the
+//! ICMPv4 and ICMPv6 versions of the packets.
+//!
+//! Both packet types can be constructed from a slice: `&[u8]` via the [`TryFrom`] trait.
+//!
+//! # Examples
+//!
+//! Constructing an ICMPv4 echo request.
+//! ```
+//! # use icmp_socket::packet::*;
+//! let packet = Icmpv4Packet::with_echo_request(
+//!     42, // An identifier so you can recognize responses to your own packets.
+//!     0, // the first echo request packet in our sequence.
+//!     "a payload big enough to matter".as_bytes().to_vec()
+//! ).unwrap();
+//! ```
+//!
+//! Parsing an ICMPv4 packet from a byte buffer.
+//! ```
+//! # use icmp_socket::packet::*;
+//! use std::convert::TryFrom;
+//! # let packet = Icmpv4Packet::with_echo_request(
+//! #     42, // An identifier so you can recognize responses to your own packets.
+//! #     0, // the first echo request packet in our sequence.
+//! #     "a payload big enough to matter".as_bytes().to_vec()
+//! # ).unwrap();
+//! # let mut byte_buffer = vec![0; 20];
+//! # byte_buffer.extend(packet.get_bytes(true)); // convert a packet to bytes with a checksum.
+//! let parsed_packet = Icmpv4Packet::try_from(byte_buffer.as_slice()).unwrap();
+//! ```
 use std::convert::TryFrom;
 
 use byteorder::{BigEndian, ByteOrder};
@@ -54,6 +86,7 @@ pub trait WithEchoRequest {
 }
 
 /// Construct a packet for Echo Reply messages.
+/// This packet type is really only used for the ICMPv6 protocol.
 pub trait WithEchoReply {
     type Packet;
 
@@ -669,7 +702,7 @@ pub struct Icmpv4Packet {
 }
 
 impl Icmpv4Packet {
-    /// Parse an Icmpv4Packet from bytes.
+    /// Parse an Icmpv4Packet from bytes including the IPv4 header.
     pub fn parse<B: AsRef<[u8]>>(bytes: B) -> Result<Self, PacketParseError> {
         let mut bytes = bytes.as_ref();
         let mut packet_len = bytes.len();
