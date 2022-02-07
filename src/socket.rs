@@ -56,7 +56,7 @@ pub trait IcmpSocket {
 }
 
 /// Options for this socket.
-pub struct Opts {
+struct Opts {
     hops: u32,
 }
 
