@@ -74,7 +74,7 @@ pub fn main() {
         socket4
             .send_to(address.parse::<Ipv4Addr>().unwrap(), packet)
             .unwrap();
-        socket4.set_timeout(Duration::from_secs(1)).unwrap();
+        socket4.set_timeout(Some(Duration::from_secs(1)));
         loop {
             let (resp, sock_addr) = match socket4.rcv_from() {
                 Ok(tpl) => tpl,

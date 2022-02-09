@@ -37,9 +37,9 @@ pub trait IcmpSocket {
     /// The type of packet this socket handles.
     type PacketType;
 
-    /// Sets the timeout on the socket for rcv_from. A value of 0 will cause
-    /// rcv_from to block.
-    fn set_timeout(&mut self, timeout: Duration) -> std::io::Result<()>;
+    /// Sets the timeout on the socket for rcv_from. A value of None
+    /// will cause rcv_from to block.
+    fn set_timeout(&mut self, timeout: Option<Duration>);
 
     /// Sets the ttl for packets sent on this socket. Controls the number of
     /// hops the packet will be allowed to traverse.
@@ -58,6 +58,7 @@ pub trait IcmpSocket {
 /// Options for this socket.
 struct Opts {
     hops: u32,
+    timeout: Option<Duration>,
 }
 
 /// An ICMPv4 socket.
@@ -78,7 +79,10 @@ impl IcmpSocket4 {
             bound_to: None,
             inner: socket,
             buf: vec![0; 512],
-            opts: Opts { hops: 50 },
+            opts: Opts {
+                hops: 50,
+                timeout: None,
+            },
         })
     }
 }
@@ -108,7 +112,7 @@ impl IcmpSocket for IcmpSocket4 {
     }
 
     fn rcv_from(&mut self) -> std::io::Result<(Self::PacketType, SockAddr)> {
-        self.inner.set_read_timeout(None)?;
+        self.inner.set_read_timeout(self.opts.timeout)?;
         // NOTE(jwall): the `recv_from` implementation promises not to write uninitialised
         // bytes to the `buf`fer, so this casting is safe.
         // TODO(jwall): change to `Vec::spare_capacity_mut` when it stabilizes.
@@ -118,8 +122,8 @@ impl IcmpSocket for IcmpSocket4 {
         Ok((self.buf[0..read_count].try_into()?, addr))
     }
 
-    fn set_timeout(&mut self, timeout: Duration) -> std::io::Result<()> {
-        self.inner.set_read_timeout(Some(timeout))
+    fn set_timeout(&mut self, timeout: Option<Duration>) {
+        self.opts.timeout = timeout;
     }
 }
 
@@ -141,7 +145,10 @@ impl IcmpSocket6 {
             bound_to: None,
             inner: socket,
             buf: vec![0; 512],
-            opts: Opts { hops: 50 },
+            opts: Opts {
+                hops: 50,
+                timeout: None,
+            },
         })
     }
 }
@@ -185,7 +192,7 @@ impl IcmpSocket for IcmpSocket6 {
     }
 
     fn rcv_from(&mut self) -> std::io::Result<(Self::PacketType, SockAddr)> {
-        self.inner.set_read_timeout(None)?;
+        self.inner.set_read_timeout(self.opts.timeout)?;
         // NOTE(jwall): the `recv_from` implementation promises not to write uninitialised
         // bytes to the `buf`fer, so this casting is safe.
         // TODO(jwall): change to `Vec::spare_capacity_mut` when it stabilizes.
@@ -195,8 +202,8 @@ impl IcmpSocket for IcmpSocket6 {
         Ok((self.buf[0..read_count].try_into()?, addr))
     }
 
-    fn set_timeout(&mut self, timeout: Duration) -> std::io::Result<()> {
-        self.inner.set_read_timeout(Some(timeout))
+    fn set_timeout(&mut self, timeout: Option<Duration>) {
+        self.opts.timeout = timeout;
     }
 }
 

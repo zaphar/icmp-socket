@@ -72,7 +72,7 @@ pub fn main() {
         socket6
             .send_to(address.parse::<Ipv6Addr>().unwrap(), packet)
             .unwrap();
-        socket6.set_timeout(Duration::from_secs(1)).unwrap();
+        socket6.set_timeout(Some(Duration::from_secs(1)));
         loop {
             let (resp, sock_addr) = match socket6.rcv_from() {
                 Ok(tpl) => tpl,
