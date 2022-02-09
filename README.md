@@ -18,4 +18,4 @@ let packet6 = Icmpv6Packet::with_echo_request(42, 1, "payload".to_bytes());
 
 # API Documentation
 
-https://docs.rs/icmp-socket/0.1.2
+https://docs.rs/icmp-socket/0.2.0
