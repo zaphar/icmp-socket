@@ -70,10 +70,14 @@ pub struct IcmpSocket4 {
 }
 
 impl IcmpSocket4 {
-    /// Construct a new socket. The socket must be bound to an address using `bind_to`
+    /// Construct a new raw socket. The socket must be bound to an address using `bind_to`
     /// before it can be used to send and receive packets.
     pub fn new() -> std::io::Result<Self> {
         let socket = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))?;
+        Self::new_from_socket(socket)
+    }
+
+    fn new_from_socket(socket: Socket) -> std::io::Result<Self> {
         socket.set_recv_buffer_size(512)?;
         Ok(Self {
             bound_to: None,
@@ -84,6 +88,13 @@ impl IcmpSocket4 {
                 timeout: None,
             },
         })
+    }
+
+    /// Construct a new dgram socket. The socket must be bound to an address using `bind_to`
+    /// before it can be used to send and receive packets.
+    pub fn new_dgram_socket() -> std::io::Result<Self> {
+        let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::ICMPV4))?;
+        Self::new_from_socket(socket)
     }
 }
 
@@ -136,10 +147,14 @@ pub struct IcmpSocket6 {
 }
 
 impl IcmpSocket6 {
-    /// Construct a new socket. The socket must be bound to an address using `bind_to`
+    /// Construct a new raw socket. The socket must be bound to an address using `bind_to`
     /// before it can be used to send and receive packets.
     pub fn new() -> std::io::Result<Self> {
         let socket = Socket::new(Domain::IPV6, Type::RAW, Some(Protocol::ICMPV6))?;
+        Self::new_from_socket(socket)
+    }
+
+    fn new_from_socket(socket: Socket) -> std::io::Result<Self> {
         socket.set_recv_buffer_size(512)?;
         Ok(Self {
             bound_to: None,
@@ -150,6 +165,13 @@ impl IcmpSocket6 {
                 timeout: None,
             },
         })
+    }
+
+    /// Construct a new dgram socket. The socket must be bound to an address using `bind_to`
+    /// before it can be used to send and receive packets.
+    pub fn new_dgram_socket() -> std::io::Result<Self> {
+        let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::ICMPV6))?;
+        Self::new_from_socket(socket)
     }
 }
 
