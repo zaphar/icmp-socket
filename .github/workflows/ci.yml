@@ -42,4 +42,12 @@ jobs:
       # datagram sockets share identifier 0, so replies are not demuxed between
       # concurrent sockets.
       - name: Loopback ping smoke test
-        run: cargo test --features smol -- --ignored --test-threads=1
+        run: cargo test --features smol --test loopback_ping -- --ignored --test-threads=1
+
+      # Raw sockets need root. A cargo runner runs only the raw test binary
+      # under sudo, so the build stays unprivileged.
+      - name: Raw socket loopback test (root)
+        run: |
+          host=$(rustc -vV | sed -n 's/^host: //p' | tr 'a-z-' 'A-Z_')
+          export "CARGO_TARGET_${host}_RUNNER=sudo -E"
+          cargo test --features smol --test raw_loopback -- --ignored --test-threads=1

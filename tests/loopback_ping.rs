@@ -241,3 +241,40 @@ fn dgram_reply_carries_identifier() {
         }
     }
 }
+
+#[cfg(feature = "smol")]
+#[test]
+#[ignore]
+fn async_dgram_loopback_roundtrip() {
+    let localhost = Ipv4Addr::new(127, 0, 0, 1);
+    // `icmp_socket::*` brings the crate's own `smol` module into scope, so
+    // reach the external crate with a leading `::`.
+    ::smol::block_on(async {
+        let mut socket = match DgramIcmpSocket4::new() {
+            Ok(s) => s.into_async().expect("failed to register with smol"),
+            Err(e) => panic!("could not open an ICMP datagram socket ({})", e),
+        };
+        socket
+            .bind(Ipv4Addr::new(0, 0, 0, 0))
+            .await
+            .expect("failed to bind");
+        socket.set_timeout(Some(Duration::from_secs(2)));
+        socket
+            .send(localhost, 7, vec![0x20; 16])
+            .await
+            .expect("failed to send");
+        loop {
+            let (resp, _) = socket.rcv_from().await.expect("failed to receive a reply");
+            if let Icmpv4Message::EchoReply {
+                identifier,
+                sequence: 7,
+                ..
+            } = resp.message
+            {
+                assert!(resp.verify_checksum(), "reply failed checksum verification");
+                assert_eq!(identifier, socket.identifier());
+                return;
+            }
+        }
+    });
+}

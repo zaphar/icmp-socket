@@ -16,7 +16,7 @@
 //! Raw sockets need root (or `CAP_NET_RAW` on Linux), so these tests are
 //! `#[ignore]`d. Run them with elevated privileges, e.g.
 //! `sudo -E cargo test --test raw_loopback -- --ignored --test-threads=1`.
-use std::net::Ipv6Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
 use icmp_socket::packet::WithEchoRequest;
@@ -56,6 +56,42 @@ fn raw6_unbound_loopback_roundtrip() {
             ..
         } = resp.message
         {
+            return;
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn raw4_loopback_roundtrip() {
+    let localhost = Ipv4Addr::new(127, 0, 0, 1);
+    let mut socket = IcmpSocket4::new().expect("raw sockets need root or CAP_NET_RAW");
+    socket
+        .bind(Ipv4Addr::new(0, 0, 0, 0))
+        .expect("failed to bind");
+    socket.set_timeout(Some(Duration::from_secs(2)));
+
+    let packet = Icmpv4Packet::with_echo_request(0xBEEF, 5, vec![0x20; 16]).unwrap();
+    socket.send_to(localhost, packet).expect("failed to send");
+
+    // A raw socket also receives our own request on loopback, so match the
+    // reply on its type, identifier and sequence.
+    loop {
+        let (resp, addr) = socket.rcv_from().expect("failed to receive a reply");
+        let from = *addr
+            .as_socket_ipv4()
+            .expect("reply was not an IPv4 address")
+            .ip();
+        if from != localhost {
+            continue;
+        }
+        if let Icmpv4Message::EchoReply {
+            identifier: 0xBEEF,
+            sequence: 5,
+            ..
+        } = resp.message
+        {
+            assert!(resp.verify_checksum(), "reply failed checksum verification");
             return;
         }
     }
