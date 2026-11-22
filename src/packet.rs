@@ -506,15 +506,23 @@ impl std::fmt::Display for PacketParseError {
     }
 }
 
+impl std::error::Error for IcmpPacketBuildError {}
+
+impl std::error::Error for PacketParseError {}
+
+/// The original error is kept inside the `io::Error`. Recover it with
+/// `get_ref()` and `downcast_ref::<IcmpPacketBuildError>()`.
 impl From<IcmpPacketBuildError> for std::io::Error {
     fn from(err: IcmpPacketBuildError) -> Self {
-        std::io::Error::new(std::io::ErrorKind::Other, format!("{}", err))
+        std::io::Error::new(std::io::ErrorKind::Other, err)
     }
 }
 
+/// The original error is kept inside the `io::Error`. Recover it with
+/// `get_ref()` and `downcast_ref::<PacketParseError>()`.
 impl From<PacketParseError> for std::io::Error {
     fn from(err: PacketParseError) -> Self {
-        std::io::Error::new(std::io::ErrorKind::Other, format!("{}", err))
+        std::io::Error::new(std::io::ErrorKind::Other, err)
     }
 }
 
@@ -1386,5 +1394,25 @@ mod tests {
             }
             m => panic!("expected EchoReply, got {:?}", m),
         }
+    }
+
+    #[test]
+    fn packet_errors_survive_conversion_to_io_error() {
+        let io: std::io::Error = PacketParseError::UnrecognizedICMPType(99).into();
+        assert_eq!(io.to_string(), "UnrecognizedIcmpType(99)");
+        match io
+            .get_ref()
+            .and_then(|e| e.downcast_ref::<PacketParseError>())
+        {
+            Some(PacketParseError::UnrecognizedICMPType(99)) => {}
+            other => panic!("expected UnrecognizedICMPType(99), got {:?}", other),
+        }
+
+        let io: std::io::Error = IcmpPacketBuildError::InvalidCode(7).into();
+        assert_eq!(
+            io.get_ref()
+                .and_then(|e| e.downcast_ref::<IcmpPacketBuildError>()),
+            Some(&IcmpPacketBuildError::InvalidCode(7))
+        );
     }
 }
