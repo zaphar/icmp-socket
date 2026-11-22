@@ -19,14 +19,14 @@
 use std::{net::Ipv4Addr, time::Duration};
 
 use async_trait::async_trait;
-use smol::{future::FutureExt, Async, Timer};
+use smol::{Async, Timer, future::FutureExt};
 use socket2::{SockAddr, Socket};
 
 use crate::{
     packet::{Icmpv4Packet, WithEchoRequest},
     socket::{
-        decode_received, dgram_identifier, recv_into, timed_out_error, to_sockaddr, Core, Family,
-        SockOpts, V4,
+        Core, Family, SockOpts, V4, decode_received, dgram_identifier, recv_into, timed_out_error,
+        to_sockaddr,
     },
 };
 

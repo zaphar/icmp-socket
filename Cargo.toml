@@ -4,7 +4,8 @@ description = "ICMP sockets for both IPv4 and IPv6"
 version = "0.3.1"
 repository = "https://github.com/zaphar/icmp-socket"
 authors = ["Jeremy Wall <jeremy@marzhillstudios.com>"]
-edition = "2018"
+edition = "2024"
+rust-version = "1.85"
 license = "Apache-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

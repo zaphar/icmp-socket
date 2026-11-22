@@ -51,3 +51,25 @@ jobs:
           host=$(rustc -vV | sed -n 's/^host: //p' | tr 'a-z-' 'A-Z_')
           export "CARGO_TARGET_${host}_RUNNER=sudo -E"
           cargo test --features smol --test raw_loopback -- --ignored --test-threads=1
+
+  # The crate promises rust-version in Cargo.toml. Build the library with
+  # exactly that toolchain. Tests are not run here: dev-dependencies may need
+  # a newer toolchain.
+  msrv:
+    name: msrv (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the minimum supported toolchain
+        run: |
+          msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
+          rustup toolchain install "$msrv" --profile minimal
+          echo "MSRV=$msrv" >> "$GITHUB_ENV"
+
+      - name: Build the library (all features)
+        run: cargo "+$MSRV" build --lib --all-features
