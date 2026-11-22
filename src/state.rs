@@ -102,8 +102,11 @@ pub(crate) trait Family: Sized + 'static {
     /// Remove any IP header in front of the message and fill in what the
     /// header says. Returns the offset of the ICMP message.
     fn frame(bytes: &[u8], info: &mut Received) -> Result<usize, Self::Proto>;
-    /// Check what the kernel does not check (the ICMPv4 checksum).
-    fn verify(icmp: &[u8]) -> Result<(), Self::Proto>;
+    /// Check what the kernel does not check: the ICMPv4 checksum on Linux
+    /// raw sockets.
+    fn verify(icmp: &[u8], raw: bool) -> Result<(), Self::Proto>;
+    /// Undo changes the kernel made to a received message.
+    fn repair(_icmp: &mut [u8]) {}
     fn parse(icmp: &[u8]) -> Result<Self::Message, ParseError>;
     /// Serialize for a socket (ICMPv6: the kernel fills the checksum in).
     fn encode(msg: &Self::Message, out: &mut Vec<u8>);
@@ -170,12 +173,34 @@ impl Family for V4 {
         }
     }
 
-    fn verify(icmp: &[u8]) -> Result<(), Ipv4RecvError> {
+    /// Linux gives raw ICMPv4 sockets their copy before it checks the
+    /// checksum. Datagram sockets, and macOS, get only checked packets.
+    fn verify(icmp: &[u8], raw: bool) -> Result<(), Ipv4RecvError> {
         // Shorter messages fail to parse; report that instead.
-        if icmp.len() >= 4 && !Icmpv4Message::verify_checksum(icmp) {
+        let unchecked = cfg!(target_os = "linux") && raw;
+        if unchecked && icmp.len() >= 4 && !Icmpv4Message::verify_checksum(icmp) {
             return Err(Ipv4RecvError::BadChecksum);
         }
         Ok(())
+    }
+
+    /// The BSD `icmp_input` on macOS converts the total length of the IPv4
+    /// header inside an error message to host byte order before it delivers
+    /// the message. Swap it back, so `original` holds the bytes the sender
+    /// sent, as on Linux.
+    fn repair(icmp: &mut [u8]) {
+        use crate::icmpv4::msg_type::*;
+        if !cfg!(all(target_os = "macos", target_endian = "little")) {
+            return;
+        }
+        let error = matches!(
+            icmp.first(),
+            Some(&(DESTINATION_UNREACHABLE | SOURCE_QUENCH | TIME_EXCEEDED | PARAMETER_PROBLEM))
+        );
+        // The inner IPv4 header starts at byte 8; its total length is at 2..4.
+        if error && icmp.len() >= 12 && icmp[8] >> 4 == 4 {
+            icmp.swap(10, 11);
+        }
     }
 
     fn parse(icmp: &[u8]) -> Result<Icmpv4Message, ParseError> {
@@ -256,7 +281,7 @@ impl Family for V6 {
     }
 
     /// The kernel verifies every ICMPv6 checksum (RFC 3542 section 3.1).
-    fn verify(_icmp: &[u8]) -> Result<(), Infallible> {
+    fn verify(_icmp: &[u8], _raw: bool) -> Result<(), Infallible> {
         Ok(())
     }
 
@@ -320,6 +345,7 @@ pub(crate) fn dgram_identifier(fd: BorrowedFd<'_>) -> u16 {
 
 /// The state every socket kind shares.
 pub(crate) struct Core<F: Family> {
+    raw: bool,
     /// Datagram sockets on Linux read ICMP errors from the error queue.
     error_queue: bool,
     pub(crate) buf: Vec<u8>,
@@ -337,6 +363,7 @@ impl<F: Family> Core<F> {
         let error_queue = cfg!(target_os = "linux") && !raw;
         F::enable_info(fd, error_queue)?;
         Ok(Self {
+            raw,
             error_queue,
             buf: Vec::with_capacity(DEFAULT_MAX_MESSAGE_SIZE),
             max: DEFAULT_MAX_MESSAGE_SIZE,
@@ -565,8 +592,9 @@ impl<F: Family, M: RecvMode<F>> RecvMachine<'_, F, M> {
             self.outcome = Some(Err(RecvError::Truncated { buf_size }));
             return;
         }
+        F::repair(&mut core.buf[start..]);
         if M::PARSE {
-            if let Err(e) = F::verify(&core.buf[start..]) {
+            if let Err(e) = F::verify(&core.buf[start..], core.raw) {
                 self.outcome = Some(Err(RecvError::Protocol(e)));
                 return;
             }

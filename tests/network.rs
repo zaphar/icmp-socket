@@ -40,6 +40,12 @@ fn dgram_time_exceeded_arrives_as_a_message() {
             assert_eq!(code, icmpv4::time_exceeded_code::TTL);
             assert_ne!(from, OUTSIDE);
             assert!(!original.is_empty());
+            // Where the system delivers the original IPv4 header (macOS; on
+            // Linux datagram sockets `original` starts at our ICMP message),
+            // its total length is as sent: 20 + 8 + 16 bytes, big-endian.
+            if original[0] >> 4 == 4 {
+                assert_eq!(&original[2..4], &[0, 44]);
+            }
             return;
         }
     }
