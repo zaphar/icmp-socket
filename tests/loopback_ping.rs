@@ -42,7 +42,9 @@ fn dgram_loopback_roundtrip() {
         .expect("failed to bind");
     socket.set_timeout(Some(Duration::from_secs(2)));
 
-    socket.send(localhost, 1, vec![0x20; 16]).expect("failed to send");
+    socket
+        .send(localhost, 1, vec![0x20; 16])
+        .expect("failed to send");
 
     // Read until we see the reply for our destination or time out. The kernel
     // may rewrite the identifier on datagram sockets, so match on the reply
