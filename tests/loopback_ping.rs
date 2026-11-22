@@ -163,3 +163,21 @@ fn dgram_recv_buffer_exact_fit() {
         }
     }
 }
+
+#[test]
+#[ignore]
+fn dgram_recv_timeout_is_timed_out() {
+    let mut socket = match DgramIcmpSocket4::new() {
+        Ok(s) => s,
+        Err(e) => panic!("could not open an ICMP datagram socket ({})", e),
+    };
+    socket
+        .bind(Ipv4Addr::new(0, 0, 0, 0))
+        .expect("failed to bind");
+    socket.set_timeout(Some(Duration::from_millis(100)));
+    // Nothing was sent, so the receive times out.
+    let err = socket
+        .rcv_from()
+        .expect_err("expected a timeout with nothing sent");
+    assert_eq!(err.kind(), std::io::ErrorKind::TimedOut, "got: {}", err);
+}

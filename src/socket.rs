@@ -37,7 +37,8 @@ pub trait IcmpSocket {
     type PacketType;
 
     /// Sets the timeout on the socket for rcv_from. A value of None
-    /// will cause rcv_from to block.
+    /// will cause rcv_from to block. When the timeout expires, rcv_from
+    /// returns an error of kind `TimedOut`.
     fn set_timeout(&mut self, timeout: Option<Duration>);
 
     /// Sets the ttl for packets sent on this socket. Controls the number of
@@ -211,12 +212,25 @@ impl<F: Family> Core<F> {
 
     fn recv(&mut self) -> std::io::Result<(F::Packet, SockAddr)> {
         self.inner.set_read_timeout(self.opts.timeout)?;
-        let received = recv_into(&self.inner, &mut self.buf, self.buf_size)?;
+        let received = recv_into(&self.inner, &mut self.buf, self.buf_size).map_err(|e| {
+            // An expired SO_RCVTIMEO is EAGAIN (WouldBlock) on Unix. Report it
+            // as TimedOut, as the async sockets do.
+            if self.opts.timeout.is_some() && e.kind() == std::io::ErrorKind::WouldBlock {
+                timed_out_error()
+            } else {
+                e
+            }
+        })?;
         Ok((
             decode_received::<F>(&self.buf, received.truncated)?,
             received.addr,
         ))
     }
+}
+
+/// The error returned when `rcv_from` waited longer than the socket's timeout.
+pub(crate) fn timed_out_error() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::TimedOut, "rcv_from timed out")
 }
 
 /// The error returned when a received packet was larger than the read buffer.
@@ -347,6 +361,8 @@ impl DgramIcmpSocket4 {
     }
 
     /// Sets the timeout on the socket for `rcv_from`. A value of None blocks.
+    /// When the timeout expires, `rcv_from` returns an error of kind
+    /// `TimedOut`.
     pub fn set_timeout(&mut self, timeout: Option<Duration>) {
         self.core.opts.timeout = timeout;
     }

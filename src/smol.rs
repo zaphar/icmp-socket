@@ -24,7 +24,10 @@ use socket2::{SockAddr, Socket};
 
 use crate::{
     packet::{Icmpv4Packet, WithEchoRequest},
-    socket::{decode_received, local_port, recv_into, to_sockaddr, Core, Family, Opts, V4},
+    socket::{
+        decode_received, local_port, recv_into, timed_out_error, to_sockaddr, Core, Family, Opts,
+        V4,
+    },
 };
 
 /// Shared low-level state and operations for the async sockets, mirroring
@@ -78,10 +81,7 @@ impl<F: Family> AsyncCore<F> {
             Some(t) => {
                 recv.or(async move {
                     Timer::after(t).await;
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "rcv_from timed out",
-                    ))
+                    Err(timed_out_error())
                 })
                 .await?
             }
@@ -129,7 +129,8 @@ pub trait AsyncIcmpSocket {
     type PacketType;
 
     /// Sets the timeout on the socket for `rcv_from`. A value of None
-    /// will cause `rcv_from` to wait indefinitely.
+    /// will cause `rcv_from` to wait indefinitely. When the timeout expires,
+    /// `rcv_from` returns an error of kind `TimedOut`.
     fn set_timeout(&mut self, timeout: Option<Duration>);
 
     /// Sets the ttl for packets sent on this socket. Controls the number of
@@ -221,6 +222,8 @@ impl AsyncDgramIcmpV4Socket {
     }
 
     /// Sets the timeout on the socket for `rcv_from`. A value of None blocks.
+    /// When the timeout expires, `rcv_from` returns an error of kind
+    /// `TimedOut`.
     pub fn set_timeout(&mut self, timeout: Option<Duration>) {
         self.core.opts.timeout = timeout;
     }
