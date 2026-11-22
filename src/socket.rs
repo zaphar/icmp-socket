@@ -429,14 +429,18 @@ impl DgramIcmpSocket4 {
     }
 }
 
-/// An Icmpv6 socket.
+/// A raw ICMPv6 socket. Requires elevated privileges.
+///
+/// The kernel computes the checksum of every ICMPv6 packet sent on this
+/// socket and verifies it on every packet received (RFC 3542 section 3.1),
+/// so the socket does not need to be bound to send.
 pub struct IcmpSocket6 {
     core: Core<V6>,
 }
 
 impl IcmpSocket6 {
-    /// Construct a new raw socket. The socket must be bound to an address using `bind_to`
-    /// before it can be used to send and receive packets.
+    /// Construct a new raw socket. Bind it with `bind` to choose the local
+    /// address; otherwise the kernel chooses one for each destination.
     pub fn new() -> std::io::Result<Self> {
         Ok(Self {
             core: Core::open(Type::RAW)?,
@@ -463,22 +467,10 @@ impl IcmpSocket for IcmpSocket6 {
         self.core.bind(addr.into())
     }
 
-    fn send_to(
-        &mut self,
-        dest: Self::AddrType,
-        mut packet: Self::PacketType,
-    ) -> std::io::Result<()> {
-        let source = match self.core.bound_to {
-            Some(ref addr) => addr,
-            None => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Socket not bound to an address",
-                ))
-            }
-        };
-        packet = packet.with_checksum(source, &dest);
-        self.core.send_bytes(dest, &packet.get_bytes(true))
+    /// Sends the packet to the given destination. The kernel fills in the
+    /// checksum, so any checksum set on `packet` is ignored.
+    fn send_to(&mut self, dest: Self::AddrType, packet: Self::PacketType) -> std::io::Result<()> {
+        self.core.send_bytes(dest, &packet.get_bytes(false))
     }
 
     fn rcv_from(&mut self) -> std::io::Result<(Self::PacketType, SockAddr)> {
