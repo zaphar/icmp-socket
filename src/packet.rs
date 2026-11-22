@@ -646,9 +646,7 @@ impl Icmpv4Message {
             } => {
                 bytes.push(*pointer);
                 bytes.push(padding.0);
-                let mut buf = vec![0, 2];
-                BigEndian::write_u16(&mut buf, padding.1);
-                bytes.append(&mut buf);
+                bytes.extend_from_slice(&padding.1.to_be_bytes());
                 bytes.extend_from_slice(header);
             }
             Self::Timestamp {
@@ -667,18 +665,11 @@ impl Icmpv4Message {
                 receive,
                 transmit,
             } => {
-                let mut buf = vec![0, 2];
-                BigEndian::write_u16(&mut buf, *identifier);
-                bytes.append(&mut buf);
-                BigEndian::write_u16(&mut buf, *sequence);
-                bytes.append(&mut buf);
-                buf = vec![0, 4];
-                BigEndian::write_u32(&mut buf, *originate);
-                bytes.append(&mut buf);
-                BigEndian::write_u32(&mut buf, *receive);
-                bytes.append(&mut buf);
-                BigEndian::write_u32(&mut buf, *transmit);
-                bytes.append(&mut buf);
+                bytes.extend_from_slice(&identifier.to_be_bytes());
+                bytes.extend_from_slice(&sequence.to_be_bytes());
+                bytes.extend_from_slice(&originate.to_be_bytes());
+                bytes.extend_from_slice(&receive.to_be_bytes());
+                bytes.extend_from_slice(&transmit.to_be_bytes());
             }
             Self::Information {
                 // type 15
@@ -690,11 +681,8 @@ impl Icmpv4Message {
                 identifier,
                 sequence,
             } => {
-                let mut buf = vec![0, 2];
-                BigEndian::write_u16(&mut buf, *identifier);
-                bytes.append(&mut buf);
-                BigEndian::write_u16(&mut buf, *sequence);
-                bytes.append(&mut buf);
+                bytes.extend_from_slice(&identifier.to_be_bytes());
+                bytes.extend_from_slice(&sequence.to_be_bytes());
             }
         }
         bytes
@@ -1310,5 +1298,25 @@ mod tests {
         let mut bad = good;
         bad.checksum ^= 0xFFFF;
         assert!(!bad.verify_checksum(&lo, &lo));
+    }
+
+    #[test]
+    fn icmpv4_timestamp_and_information_round_trip() {
+        // Each message is serialized back to exactly the bytes it was parsed
+        // from. These four types once panicked in get_bytes.
+        let timestamp_body: Vec<u8> = (1..=12).collect();
+        for typ in [13u8, 14] {
+            let mut raw = vec![typ, 0, 0, 0, 0x12, 0x34, 0x56, 0x78];
+            raw.extend_from_slice(&timestamp_body);
+            let pkt = Icmpv4Packet::parse_dgram(&raw).unwrap();
+            assert_eq!(pkt.get_bytes(true), raw, "type {}", typ);
+            pkt.with_checksum().verify_checksum();
+        }
+        for typ in [15u8, 16] {
+            let raw = vec![typ, 0, 0, 0, 0x12, 0x34, 0x56, 0x78];
+            let pkt = Icmpv4Packet::parse_dgram(&raw).unwrap();
+            assert_eq!(pkt.get_bytes(true), raw, "type {}", typ);
+            pkt.with_checksum().verify_checksum();
+        }
     }
 }
