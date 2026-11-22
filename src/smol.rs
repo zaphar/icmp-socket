@@ -16,11 +16,7 @@
 //! This module is gated behind the `smol` feature. Obtain an async socket by
 //! constructing a [`crate::IcmpSocket4`] or [`crate::DgramIcmpSocket4`] and
 //! calling `into_async`.
-use std::{
-    mem::MaybeUninit,
-    net::{IpAddr, Ipv4Addr},
-    time::Duration,
-};
+use std::{mem::MaybeUninit, net::Ipv4Addr, time::Duration};
 
 use async_trait::async_trait;
 use smol::{future::FutureExt, Async, Timer};
@@ -28,22 +24,22 @@ use socket2::{SockAddr, Socket};
 
 use crate::{
     packet::{Icmpv4Packet, WithEchoRequest},
-    socket::{ip_to_socket, truncated_error, Opts},
+    socket::{decode_received, local_port, to_sockaddr, Family, Opts, V4},
 };
 
-/// Shared low-level state and operations for the async ICMPv4 sockets, mirroring
+/// Shared low-level state and operations for the async sockets, mirroring
 /// the blocking `Core` but driven through the smol reactor.
-struct AsyncIcmp4Core {
+struct AsyncCore<F: Family> {
     inner: Async<Socket>,
-    bound_to: Option<Ipv4Addr>,
+    bound_to: Option<F::Addr>,
     buf: Vec<u8>,
     opts: Opts,
 }
 
-impl AsyncIcmp4Core {
+impl<F: Family> AsyncCore<F> {
     fn new(
         inner: Socket,
-        bound_to: Option<Ipv4Addr>,
+        bound_to: Option<F::Addr>,
         buf: Vec<u8>,
         opts: Opts,
     ) -> std::io::Result<Self> {
@@ -55,33 +51,27 @@ impl AsyncIcmp4Core {
         })
     }
 
-    fn bind(&mut self, addr: Ipv4Addr) -> std::io::Result<()> {
+    fn bind(&mut self, addr: F::Addr) -> std::io::Result<()> {
         self.bound_to = Some(addr);
-        let sock = ip_to_socket(&IpAddr::V4(addr));
         // Binding does not block, so it is safe to call directly on the
         // underlying descriptor.
-        self.inner.get_ref().bind(&(sock.into()))
-    }
-
-    fn local_identifier(&self) -> std::io::Result<u16> {
-        let addr = self.inner.get_ref().local_addr()?;
-        Ok(addr.as_socket_ipv4().map(|s| s.port()).unwrap_or(0))
+        self.inner.get_ref().bind(&to_sockaddr(addr))
     }
 
     fn set_read_buffer_size(&mut self, size: usize) {
         self.buf.resize(size, 0);
     }
 
-    async fn send_bytes(&self, dest: Ipv4Addr, bytes: &[u8]) -> std::io::Result<()> {
-        self.inner.get_ref().set_ttl(self.opts.hops)?;
-        let dest: SockAddr = ip_to_socket(&IpAddr::V4(dest)).into();
+    async fn send_bytes(&self, dest: F::Addr, bytes: &[u8]) -> std::io::Result<()> {
+        F::set_hops(self.inner.get_ref(), self.opts.hops)?;
+        let dest = to_sockaddr(dest);
         self.inner
             .write_with(|sock| sock.send_to(bytes, &dest))
             .await?;
         Ok(())
     }
 
-    async fn recv(&mut self) -> std::io::Result<(Icmpv4Packet, SockAddr)> {
+    async fn recv(&mut self) -> std::io::Result<(F::Packet, SockAddr)> {
         let timeout = self.opts.timeout;
         let inner = &self.inner;
         let buf = &mut self.buf;
@@ -105,20 +95,13 @@ impl AsyncIcmp4Core {
             }
             None => recv.await?,
         };
-        // A full buffer means the packet may have been truncated on read.
-        if read_count == self.buf.len() {
-            return Err(truncated_error());
-        }
-        // Whether an IPv4 header is present depends on the OS and socket type,
-        // so detect it from the bytes rather than assuming.
-        let pkt = Icmpv4Packet::parse_auto(&self.buf[0..read_count])?;
-        Ok((pkt, addr))
+        Ok((decode_received::<F>(&self.buf, read_count)?, addr))
     }
 }
 
 /// An async raw (SOCK_RAW) ICMPv4 socket driven by the smol reactor.
 pub struct AsyncIcmpV4Socket {
-    core: AsyncIcmp4Core,
+    core: AsyncCore<V4>,
 }
 
 impl AsyncIcmpV4Socket {
@@ -131,7 +114,7 @@ impl AsyncIcmpV4Socket {
         opts: Opts,
     ) -> std::io::Result<Self> {
         Ok(Self {
-            core: AsyncIcmp4Core::new(inner, bound_to, buf, opts)?,
+            core: AsyncCore::new(inner, bound_to, buf, opts)?,
         })
     }
 
@@ -214,7 +197,7 @@ impl AsyncIcmpSocket for AsyncIcmpV4Socket {
 /// identifier (derived from the bound local port) rather than taking it from
 /// the caller, so [`Self::send`] takes only the sequence and payload.
 pub struct AsyncDgramIcmpV4Socket {
-    core: AsyncIcmp4Core,
+    core: AsyncCore<V4>,
     identifier: u16,
 }
 
@@ -228,7 +211,7 @@ impl AsyncDgramIcmpV4Socket {
         identifier: u16,
     ) -> std::io::Result<Self> {
         Ok(Self {
-            core: AsyncIcmp4Core::new(inner, bound_to, buf, opts)?,
+            core: AsyncCore::new(inner, bound_to, buf, opts)?,
             identifier,
         })
     }
@@ -267,7 +250,7 @@ impl AsyncDgramIcmpV4Socket {
     /// port.
     pub async fn bind<A: Into<Ipv4Addr>>(&mut self, addr: A) -> std::io::Result<()> {
         self.core.bind(addr.into())?;
-        self.identifier = self.core.local_identifier()?;
+        self.identifier = local_port(self.core.inner.get_ref())?;
         Ok(())
     }
 
