@@ -22,3 +22,8 @@ pub use packet::{Icmpv4Message, Icmpv4Packet, Icmpv6Message, Icmpv6Packet};
 pub use socket::{DgramIcmpSocket4, IcmpSocket, IcmpSocket4, IcmpSocket6};
 #[cfg(feature = "smol")]
 pub mod smol;
+
+// Compile the README examples as doctests so they stay correct.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
