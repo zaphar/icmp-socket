@@ -62,10 +62,8 @@ impl<F: Family> AsyncCore<F> {
         self.buf_size = size;
     }
 
-    async fn send_bytes(&self, dest: F::Addr, bytes: &[u8]) -> std::io::Result<()> {
-        if let Some(hops) = self.opts.hops {
-            F::set_hops(self.inner.get_ref(), hops)?;
-        }
+    async fn send_bytes(&mut self, dest: F::Addr, bytes: &[u8]) -> std::io::Result<()> {
+        self.opts.apply_hops::<F>(self.inner.get_ref())?;
         let dest = to_sockaddr(dest);
         self.inner
             .write_with(|sock| sock.send_to(bytes, &dest))

@@ -183,11 +183,46 @@ pub(crate) struct Core<F: Family> {
     pub(crate) opts: SockOpts,
 }
 
-/// The options a socket applies on send and receive.
+/// The options a socket applies on send and receive. The kernel keeps an
+/// option once set, so each value is applied only when it changed.
 pub(crate) struct SockOpts {
     /// The hop limit (TTL). `None` keeps the OS default.
     pub(crate) hops: Option<u32>,
     pub(crate) timeout: Option<Duration>,
+    applied_hops: Option<u32>,
+    /// `None` until a timeout was applied.
+    applied_timeout: Option<Option<Duration>>,
+}
+
+impl SockOpts {
+    fn new() -> Self {
+        Self {
+            hops: None,
+            timeout: None,
+            applied_hops: None,
+            applied_timeout: None,
+        }
+    }
+
+    /// Apply the hop limit if the caller set or changed it.
+    pub(crate) fn apply_hops<F: Family>(&mut self, sock: &Socket) -> std::io::Result<()> {
+        if let Some(hops) = self.hops {
+            if self.applied_hops != Some(hops) {
+                F::set_hops(sock, hops)?;
+                self.applied_hops = Some(hops);
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply the read timeout if it changed.
+    fn apply_timeout(&mut self, sock: &Socket) -> std::io::Result<()> {
+        if self.applied_timeout != Some(self.timeout) {
+            sock.set_read_timeout(self.timeout)?;
+            self.applied_timeout = Some(self.timeout);
+        }
+        Ok(())
+    }
 }
 
 impl<F: Family> Core<F> {
@@ -197,10 +232,7 @@ impl<F: Family> Core<F> {
             bound_to: None,
             buf: Vec::with_capacity(DEFAULT_RECV_BUFFER_SIZE),
             buf_size: DEFAULT_RECV_BUFFER_SIZE,
-            opts: SockOpts {
-                hops: None,
-                timeout: None,
-            },
+            opts: SockOpts::new(),
         })
     }
 
@@ -213,16 +245,14 @@ impl<F: Family> Core<F> {
         self.buf_size = size;
     }
 
-    fn send_bytes(&self, dest: F::Addr, bytes: &[u8]) -> std::io::Result<()> {
-        if let Some(hops) = self.opts.hops {
-            F::set_hops(&self.inner, hops)?;
-        }
+    fn send_bytes(&mut self, dest: F::Addr, bytes: &[u8]) -> std::io::Result<()> {
+        self.opts.apply_hops::<F>(&self.inner)?;
         self.inner.send_to(bytes, &to_sockaddr(dest))?;
         Ok(())
     }
 
     fn recv(&mut self) -> std::io::Result<(F::Packet, SockAddr)> {
-        self.inner.set_read_timeout(self.opts.timeout)?;
+        self.opts.apply_timeout(&self.inner)?;
         let received = recv_into(&self.inner, &mut self.buf, self.buf_size).map_err(|e| {
             // An expired SO_RCVTIMEO is EAGAIN (WouldBlock) on Unix. Report it
             // as TimedOut, as the async sockets do.
