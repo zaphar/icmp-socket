@@ -158,6 +158,19 @@ pub(crate) fn recv_into(
     })
 }
 
+/// The identifier a datagram (ping) socket uses on the wire.
+pub(crate) fn dgram_identifier(sock: &Socket) -> u16 {
+    if cfg!(target_os = "macos") {
+        // macOS keeps the identifier the caller sets, assigns the socket no
+        // port, and delivers every reply to every datagram ICMP socket. Use
+        // the process ID, as macOS ping does.
+        std::process::id() as u16
+    } else {
+        // Linux replaces the identifier with the socket's local port.
+        local_port(sock).unwrap_or(0)
+    }
+}
+
 /// Decode a received message, reporting a truncation instead of a partial
 /// packet.
 pub(crate) fn decode_received<F: Family>(
@@ -351,6 +364,9 @@ impl IcmpSocket for IcmpSocket4 {
 /// port. This type therefore owns the identifier, reported by
 /// [`Self::identifier`], and its [`Self::send`] takes only the sequence and
 /// payload. Match replies against [`Self::identifier`].
+///
+/// On macOS every datagram ICMP socket receives every reply, so the caller
+/// must filter replies.
 pub struct DgramIcmpSocket4 {
     core: Core<V4>,
 }
@@ -384,12 +400,15 @@ impl DgramIcmpSocket4 {
     /// The ICMP identifier this socket uses on the wire. Use it to match replies
     /// that belong to this socket.
     ///
-    /// This is the socket's local port, read from the socket on each call. On
-    /// Linux the kernel assigns a unique port at [`Self::bind`] or at the first
-    /// send, and the value is `0` before that. On macOS a datagram ICMP socket
-    /// is not assigned a port, so this is `0` and is not unique across sockets.
+    /// On Linux this is the socket's local port, read from the socket on each
+    /// call. The kernel assigns a unique port at [`Self::bind`] or at the
+    /// first send, and the value is `0` before that.
+    ///
+    /// On macOS a datagram ICMP socket has no port, and the kernel keeps the
+    /// identifier the sender sets. This is the low 16 bits of the process ID,
+    /// as macOS `ping` uses, so two sockets in one process share it.
     pub fn identifier(&self) -> u16 {
-        local_port(&self.core.inner).unwrap_or(0)
+        dgram_identifier(&self.core.inner)
     }
 
     /// Sets the ttl for packets sent on this socket. Until it is called, the

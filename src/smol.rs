@@ -25,7 +25,7 @@ use socket2::{SockAddr, Socket};
 use crate::{
     packet::{Icmpv4Packet, WithEchoRequest},
     socket::{
-        decode_received, local_port, recv_into, timed_out_error, to_sockaddr, Core, Family,
+        decode_received, dgram_identifier, recv_into, timed_out_error, to_sockaddr, Core, Family,
         SockOpts, V4,
     },
 };
@@ -213,10 +213,10 @@ impl AsyncDgramIcmpV4Socket {
     }
 
     /// The ICMP identifier this socket uses on the wire. Match replies against
-    /// it. It is read from the socket on each call, as described for
+    /// it. It is chosen as described for
     /// [`crate::DgramIcmpSocket4::identifier`].
     pub fn identifier(&self) -> u16 {
-        local_port(self.core.inner.get_ref()).unwrap_or(0)
+        dgram_identifier(self.core.inner.get_ref())
     }
 
     /// Sets the timeout on the socket for `rcv_from`. A value of None blocks.

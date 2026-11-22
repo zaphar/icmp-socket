@@ -209,3 +209,35 @@ fn dgram_identifier_after_send_without_bind() {
         }
     }
 }
+
+#[test]
+#[ignore]
+fn dgram_reply_carries_identifier() {
+    let localhost = Ipv4Addr::new(127, 0, 0, 1);
+    let mut socket = match DgramIcmpSocket4::new() {
+        Ok(s) => s,
+        Err(e) => panic!("could not open an ICMP datagram socket ({})", e),
+    };
+    socket
+        .bind(Ipv4Addr::new(0, 0, 0, 0))
+        .expect("failed to bind");
+    socket.set_timeout(Some(Duration::from_secs(2)));
+    if cfg!(target_os = "macos") {
+        assert_eq!(socket.identifier(), std::process::id() as u16);
+    }
+    socket
+        .send(localhost, 6, vec![0x20; 16])
+        .expect("failed to send");
+    loop {
+        let (resp, _) = socket.rcv_from().expect("failed to receive a reply");
+        if let Icmpv4Message::EchoReply {
+            identifier,
+            sequence: 6,
+            ..
+        } = resp.message
+        {
+            assert_eq!(identifier, socket.identifier());
+            return;
+        }
+    }
+}
