@@ -25,8 +25,8 @@ use socket2::{SockAddr, Socket};
 use crate::{
     packet::{Icmpv4Packet, WithEchoRequest},
     socket::{
-        decode_received, local_port, recv_into, timed_out_error, to_sockaddr, Core, Family, Opts,
-        V4,
+        decode_received, local_port, recv_into, timed_out_error, to_sockaddr, Core, Family,
+        SockOpts, V4,
     },
 };
 
@@ -37,7 +37,7 @@ struct AsyncCore<F: Family> {
     bound_to: Option<F::Addr>,
     buf: Vec<u8>,
     buf_size: usize,
-    opts: Opts,
+    opts: SockOpts,
 }
 
 impl<F: Family> AsyncCore<F> {
@@ -63,7 +63,9 @@ impl<F: Family> AsyncCore<F> {
     }
 
     async fn send_bytes(&self, dest: F::Addr, bytes: &[u8]) -> std::io::Result<()> {
-        F::set_hops(self.inner.get_ref(), self.opts.hops)?;
+        if let Some(hops) = self.opts.hops {
+            F::set_hops(self.inner.get_ref(), hops)?;
+        }
         let dest = to_sockaddr(dest);
         self.inner
             .write_with(|sock| sock.send_to(bytes, &dest))
@@ -134,7 +136,8 @@ pub trait AsyncIcmpSocket {
     fn set_timeout(&mut self, timeout: Option<Duration>);
 
     /// Sets the ttl for packets sent on this socket. Controls the number of
-    /// hops the packet will be allowed to traverse.
+    /// hops the packet will be allowed to traverse. Until it is called, the
+    /// OS default applies.
     fn set_max_hops(&mut self, hops: u32);
 
     /// Binds this socket to an address.
@@ -161,7 +164,7 @@ impl AsyncIcmpSocket for AsyncIcmpV4Socket {
     }
 
     fn set_max_hops(&mut self, hops: u32) {
-        self.core.opts.hops = hops;
+        self.core.opts.hops = Some(hops);
     }
 
     async fn bind<A: Into<Self::AddrType> + Send>(&mut self, addr: A) -> std::io::Result<()> {
@@ -228,9 +231,10 @@ impl AsyncDgramIcmpV4Socket {
         self.core.opts.timeout = timeout;
     }
 
-    /// Sets the ttl for packets sent on this socket.
+    /// Sets the ttl for packets sent on this socket. Until it is called, the
+    /// OS default applies.
     pub fn set_max_hops(&mut self, hops: u32) {
-        self.core.opts.hops = hops;
+        self.core.opts.hops = Some(hops);
     }
 
     /// Bind the socket and establish its identifier from the assigned local

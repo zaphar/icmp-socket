@@ -42,7 +42,8 @@ pub trait IcmpSocket {
     fn set_timeout(&mut self, timeout: Option<Duration>);
 
     /// Sets the ttl for packets sent on this socket. Controls the number of
-    /// hops the packet will be allowed to traverse.
+    /// hops the packet will be allowed to traverse. Until it is called, the
+    /// OS default applies.
     fn set_max_hops(&mut self, hops: u32);
 
     /// Binds this socket to an address.
@@ -56,6 +57,7 @@ pub trait IcmpSocket {
 }
 
 /// Options for this socket.
+#[deprecated(note = "not used by the sockets; set options with the socket methods")]
 pub struct Opts {
     pub hops: u32,
     pub timeout: Option<Duration>,
@@ -178,7 +180,14 @@ pub(crate) struct Core<F: Family> {
     pub(crate) buf: Vec<u8>,
     /// The largest message one read accepts.
     pub(crate) buf_size: usize,
-    pub(crate) opts: Opts,
+    pub(crate) opts: SockOpts,
+}
+
+/// The options a socket applies on send and receive.
+pub(crate) struct SockOpts {
+    /// The hop limit (TTL). `None` keeps the OS default.
+    pub(crate) hops: Option<u32>,
+    pub(crate) timeout: Option<Duration>,
 }
 
 impl<F: Family> Core<F> {
@@ -188,8 +197,8 @@ impl<F: Family> Core<F> {
             bound_to: None,
             buf: Vec::with_capacity(DEFAULT_RECV_BUFFER_SIZE),
             buf_size: DEFAULT_RECV_BUFFER_SIZE,
-            opts: Opts {
-                hops: 50,
+            opts: SockOpts {
+                hops: None,
                 timeout: None,
             },
         })
@@ -205,7 +214,9 @@ impl<F: Family> Core<F> {
     }
 
     fn send_bytes(&self, dest: F::Addr, bytes: &[u8]) -> std::io::Result<()> {
-        F::set_hops(&self.inner, self.opts.hops)?;
+        if let Some(hops) = self.opts.hops {
+            F::set_hops(&self.inner, hops)?;
+        }
         self.inner.send_to(bytes, &to_sockaddr(dest))?;
         Ok(())
     }
@@ -280,7 +291,7 @@ impl IcmpSocket for IcmpSocket4 {
     type PacketType = Icmpv4Packet;
 
     fn set_max_hops(&mut self, hops: u32) {
-        self.core.opts.hops = hops;
+        self.core.opts.hops = Some(hops);
     }
 
     fn bind<A: Into<Self::AddrType>>(&mut self, addr: A) -> std::io::Result<()> {
@@ -355,9 +366,10 @@ impl DgramIcmpSocket4 {
         self.identifier
     }
 
-    /// Sets the ttl for packets sent on this socket.
+    /// Sets the ttl for packets sent on this socket. Until it is called, the
+    /// OS default applies.
     pub fn set_max_hops(&mut self, hops: u32) {
-        self.core.opts.hops = hops;
+        self.core.opts.hops = Some(hops);
     }
 
     /// Sets the timeout on the socket for `rcv_from`. A value of None blocks.
@@ -414,7 +426,7 @@ impl IcmpSocket for IcmpSocket6 {
     type PacketType = Icmpv6Packet;
 
     fn set_max_hops(&mut self, hops: u32) {
-        self.core.opts.hops = hops;
+        self.core.opts.hops = Some(hops);
     }
 
     fn bind<A: Into<Self::AddrType>>(&mut self, addr: A) -> std::io::Result<()> {
