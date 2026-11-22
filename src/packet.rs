@@ -87,7 +87,6 @@ pub trait WithEchoRequest {
 }
 
 /// Construct a packet for Echo Reply messages.
-/// This packet type is really only used for the ICMPv6 protocol.
 pub trait WithEchoReply {
     type Packet;
 
@@ -912,6 +911,27 @@ impl WithEchoRequest for Icmpv4Packet {
     }
 }
 
+impl WithEchoReply for Icmpv4Packet {
+    type Packet = Icmpv4Packet;
+
+    fn with_echo_reply(
+        identifier: u16,
+        sequence: u16,
+        payload: Vec<u8>,
+    ) -> Result<Self::Packet, IcmpPacketBuildError> {
+        Ok(Self {
+            typ: 0,
+            code: 0,
+            checksum: 0,
+            message: Icmpv4Message::EchoReply {
+                identifier,
+                sequence,
+                payload,
+            },
+        })
+    }
+}
+
 impl WithUnreachable for Icmpv4Packet {
     type Packet = Icmpv4Packet;
 
@@ -1343,6 +1363,28 @@ mod tests {
                 assert_eq!(header, vec![0x45, 0, 0, 20]);
             }
             m => panic!("expected ParameterProblem, got {:?}", m),
+        }
+    }
+
+    #[test]
+    fn icmpv4_echo_reply_construction() {
+        let pkt = Icmpv4Packet::with_echo_reply(42, 1, vec![1, 2, 3, 4])
+            .unwrap()
+            .with_checksum();
+        assert_eq!(pkt.typ, 0);
+        assert_eq!(pkt.code, 0);
+        let parsed = Icmpv4Packet::parse_dgram(pkt.get_bytes(true)).unwrap();
+        assert!(parsed.verify_checksum());
+        match parsed.message {
+            Icmpv4Message::EchoReply {
+                identifier,
+                sequence,
+                payload,
+            } => {
+                assert_eq!((identifier, sequence), (42, 1));
+                assert_eq!(payload, vec![1, 2, 3, 4]);
+            }
+            m => panic!("expected EchoReply, got {:?}", m),
         }
     }
 }
