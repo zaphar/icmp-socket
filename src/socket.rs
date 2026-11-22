@@ -23,7 +23,7 @@ use std::{
 
 use socket2::{Domain, MaybeUninitSlice, Protocol, SockAddr, Socket, Type};
 
-use crate::packet::{Icmpv4Packet, Icmpv6Packet, PacketParseError, WithEchoRequest};
+use crate::{Icmpv4Message, Icmpv6Message};
 
 pub fn ip_to_socket(ip: &IpAddr) -> SocketAddr {
     SocketAddr::new(*ip, 0)
@@ -80,7 +80,7 @@ pub(crate) trait Family {
 
     /// Decode a received message. Whether it starts with an IP header
     /// depends on the protocol, the OS and the socket type.
-    fn decode(bytes: &[u8]) -> Result<Self::Packet, PacketParseError>;
+    fn decode(bytes: &[u8]) -> std::io::Result<Self::Packet>;
 }
 
 pub(crate) enum V4 {}
@@ -89,16 +89,16 @@ impl Family for V4 {
     const DOMAIN: Domain = Domain::IPV4;
     const PROTOCOL: Protocol = Protocol::ICMPV4;
     type Addr = Ipv4Addr;
-    type Packet = Icmpv4Packet;
+    type Packet = Icmpv4Message;
 
     fn set_hops(sock: &Socket, hops: u32) -> std::io::Result<()> {
         sock.set_ttl_v4(hops)
     }
 
-    fn decode(bytes: &[u8]) -> Result<Icmpv4Packet, PacketParseError> {
+    fn decode(bytes: &[u8]) -> std::io::Result<Icmpv4Message> {
         // Whether an IPv4 header is present depends on the OS and socket
         // type, so detect it from the bytes rather than assuming.
-        Icmpv4Packet::parse_auto(bytes)
+        Ok(Icmpv4Message::parse(strip_ipv4_header(bytes)?)?)
     }
 }
 
@@ -108,15 +108,33 @@ impl Family for V6 {
     const DOMAIN: Domain = Domain::IPV6;
     const PROTOCOL: Protocol = Protocol::ICMPV6;
     type Addr = Ipv6Addr;
-    type Packet = Icmpv6Packet;
+    type Packet = Icmpv6Message;
 
     fn set_hops(sock: &Socket, hops: u32) -> std::io::Result<()> {
         sock.set_unicast_hops_v6(hops)
     }
 
-    fn decode(bytes: &[u8]) -> Result<Icmpv6Packet, PacketParseError> {
+    fn decode(bytes: &[u8]) -> std::io::Result<Icmpv6Message> {
         // IPv6 sockets never deliver the IPv6 header.
-        Icmpv6Packet::parse(bytes)
+        Ok(Icmpv6Message::parse(bytes)?)
+    }
+}
+
+/// Remove the IPv4 header if the bytes start with one.
+///
+/// Raw sockets always deliver the IPv4 header, Linux datagram sockets never
+/// do, and macOS datagram sockets do. A valid IPv4 header starts with
+/// version 4 and an IHL of at least 5 (`0x45..=0x4F`); no assigned ICMP type
+/// is in that range, so an ICMP message is never mistaken for a header.
+pub(crate) fn strip_ipv4_header(bytes: &[u8]) -> std::io::Result<&[u8]> {
+    match bytes.first() {
+        Some(&b) if b >> 4 == 4 && b & 0x0F >= 5 => {
+            let header_len = usize::from(b & 0x0F) * 4;
+            bytes.get(header_len..).ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "truncated IPv4 header")
+            })
+        }
+        _ => Ok(bytes),
     }
 }
 
@@ -331,7 +349,7 @@ impl IcmpSocket4 {
 
 impl IcmpSocket for IcmpSocket4 {
     type AddrType = Ipv4Addr;
-    type PacketType = Icmpv4Packet;
+    type PacketType = Icmpv4Message;
 
     fn set_max_hops(&mut self, hops: u32) {
         self.core.opts.hops = Some(hops);
@@ -342,8 +360,7 @@ impl IcmpSocket for IcmpSocket4 {
     }
 
     fn send_to(&mut self, dest: Self::AddrType, packet: Self::PacketType) -> std::io::Result<()> {
-        self.core
-            .send_bytes(dest, &packet.with_checksum().get_bytes(true))
+        self.core.send_bytes(dest, &packet.to_bytes())
     }
 
     fn rcv_from(&mut self) -> std::io::Result<(Self::PacketType, SockAddr)> {
@@ -427,14 +444,13 @@ impl DgramIcmpSocket4 {
     /// Send an echo request to `dest`. The identifier is supplied by the socket,
     /// so the caller provides only the sequence number and payload.
     pub fn send(&mut self, dest: Ipv4Addr, sequence: u16, payload: Vec<u8>) -> std::io::Result<()> {
-        let packet = Icmpv4Packet::with_echo_request(self.identifier(), sequence, payload)?;
-        self.core
-            .send_bytes(dest, &packet.with_checksum().get_bytes(true))
+        let packet = Icmpv4Message::echo_request(self.identifier(), sequence, payload);
+        self.core.send_bytes(dest, &packet.to_bytes())
     }
 
     /// Receive a packet. Replies are not filtered; compare against
     /// [`Self::identifier`] to select those belonging to this socket.
-    pub fn rcv_from(&mut self) -> std::io::Result<(Icmpv4Packet, SockAddr)> {
+    pub fn rcv_from(&mut self) -> std::io::Result<(Icmpv4Message, SockAddr)> {
         self.core.recv()
     }
 
@@ -472,7 +488,7 @@ impl IcmpSocket6 {
 
 impl IcmpSocket for IcmpSocket6 {
     type AddrType = Ipv6Addr;
-    type PacketType = Icmpv6Packet;
+    type PacketType = Icmpv6Message;
 
     fn set_max_hops(&mut self, hops: u32) {
         self.core.opts.hops = Some(hops);
@@ -485,7 +501,7 @@ impl IcmpSocket for IcmpSocket6 {
     /// Sends the packet to the given destination. The kernel fills in the
     /// checksum, so any checksum set on `packet` is ignored.
     fn send_to(&mut self, dest: Self::AddrType, packet: Self::PacketType) -> std::io::Result<()> {
-        self.core.send_bytes(dest, &packet.get_bytes(false))
+        self.core.send_bytes(dest, &packet.to_bytes_unchecksummed())
     }
 
     fn rcv_from(&mut self) -> std::io::Result<(Self::PacketType, SockAddr)> {

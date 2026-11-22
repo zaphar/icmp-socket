@@ -16,7 +16,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use icmp_socket::packet::WithEchoRequest;
 use icmp_socket::socket::IcmpSocket;
 use icmp_socket::*;
 
@@ -29,7 +28,7 @@ pub fn main() {
     let parsed_addr = address.parse::<Ipv6Addr>().unwrap();
     // A raw socket receives ICMP packets for every process on this host, so
     // match a reply on its source, identifier and sequence.
-    let packet_handler = |pkt: Icmpv6Packet,
+    let packet_handler = |pkt: Icmpv6Message,
                           send_time: Instant,
                           addr: Ipv6Addr,
                           expected_sequence: u16|
@@ -41,7 +40,8 @@ pub fn main() {
                 identifier: IDENTIFIER,
                 sequence,
                 payload,
-            } = pkt.message
+                ..
+            } = pkt
             {
                 if sequence != expected_sequence {
                     return None;
@@ -67,7 +67,7 @@ pub fn main() {
     socket6.bind("::0".parse::<Ipv6Addr>().unwrap()).unwrap();
     let mut sequence = 0 as u16;
     loop {
-        let packet = Icmpv6Packet::with_echo_request(
+        let packet = Icmpv6Message::echo_request(
             IDENTIFIER,
             sequence,
             vec![
@@ -76,8 +76,7 @@ pub fn main() {
                 0x20, 0x61, 0x20, 0x73, 0x63, 0x72, 0x61, 0x74, 0x63, 0x68, 0x20, 0x20, 0x6b, 0x6e,
                 0x69, 0x67, 0x68, 0x74, 0x73, 0x20, 0x6f, 0x66, 0x20, 0x6e, 0x69, 0x20, 0x20, 0x20,
             ],
-        )
-        .unwrap();
+        );
         let send_time = Instant::now();
         socket6
             .send_to(address.parse::<Ipv6Addr>().unwrap(), packet)

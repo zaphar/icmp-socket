@@ -17,11 +17,10 @@ let socket = IcmpSocket4::try_from(parsed_addr).unwrap();
 It can construct and parse the common ICMP packets for both ICMP4 and ICMP6.
 
 ```rust
-use icmp_socket::packet::WithEchoRequest;
-use icmp_socket::{Icmpv4Packet, Icmpv6Packet};
+use icmp_socket::{Icmpv4Message, Icmpv6Message};
 
-let packet4 = Icmpv4Packet::with_echo_request(42, 1, b"payload".to_vec()).unwrap();
-let packet6 = Icmpv6Packet::with_echo_request(42, 1, b"payload".to_vec()).unwrap();
+let packet4 = Icmpv4Message::echo_request(42, 1, b"payload".to_vec());
+let packet6 = Icmpv6Message::echo_request(42, 1, b"payload".to_vec());
 ```
 
 # API Documentation

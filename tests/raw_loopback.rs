@@ -19,7 +19,6 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
-use icmp_socket::packet::WithEchoRequest;
 use icmp_socket::*;
 
 #[test]
@@ -31,7 +30,7 @@ fn raw6_unbound_loopback_roundtrip() {
 
     // The socket is not bound: the kernel chooses the source address and
     // computes the checksum.
-    let packet = Icmpv6Packet::with_echo_request(0xBEEF, 5, vec![0x20; 16]).unwrap();
+    let packet = Icmpv6Message::echo_request(0xBEEF, 5, vec![0x20; 16]);
     socket.send_to(lo, packet).expect("failed to send");
 
     loop {
@@ -43,18 +42,11 @@ fn raw6_unbound_loopback_roundtrip() {
         if from != lo {
             continue;
         }
-        // Both ends are ::1, so the pseudo-header is known and the checksum
-        // the kernel computed can be checked.
-        assert!(
-            resp.verify_checksum(&lo, &lo),
-            "packet from ::1 failed checksum verification: {:?}",
-            resp
-        );
         if let Icmpv6Message::EchoReply {
             identifier: 0xBEEF,
             sequence: 5,
             ..
-        } = resp.message
+        } = resp
         {
             return;
         }
@@ -71,7 +63,7 @@ fn raw4_loopback_roundtrip() {
         .expect("failed to bind");
     socket.set_timeout(Some(Duration::from_secs(2)));
 
-    let packet = Icmpv4Packet::with_echo_request(0xBEEF, 5, vec![0x20; 16]).unwrap();
+    let packet = Icmpv4Message::echo_request(0xBEEF, 5, vec![0x20; 16]);
     socket.send_to(localhost, packet).expect("failed to send");
 
     // A raw socket also receives our own request on loopback, so match the
@@ -89,9 +81,8 @@ fn raw4_loopback_roundtrip() {
             identifier: 0xBEEF,
             sequence: 5,
             ..
-        } = resp.message
+        } = resp
         {
-            assert!(resp.verify_checksum(), "reply failed checksum verification");
             return;
         }
     }

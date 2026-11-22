@@ -15,10 +15,16 @@
 //!
 //! The standard ping examples for both Ipv6 and IPv4 are in the examples
 //! directory.
-pub mod packet;
+mod checksum;
+pub mod error;
+pub mod icmpv4;
+pub mod icmpv6;
 pub mod socket;
+mod wire;
 
-pub use packet::{Icmpv4Message, Icmpv4Packet, Icmpv6Message, Icmpv6Packet};
+pub use error::{ModelledTypeError, ParseError};
+pub use icmpv4::{Icmpv4Message, Icmpv4Other};
+pub use icmpv6::{Icmpv6Message, Icmpv6Other};
 pub use socket::{DgramIcmpSocket4, IcmpSocket, IcmpSocket4, IcmpSocket6};
 #[cfg(feature = "smol")]
 pub mod smol;

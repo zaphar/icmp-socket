@@ -70,15 +70,12 @@ fn main() -> std::io::Result<()> {
                         if addr != parsed_addr {
                             continue;
                         }
-                        if !resp.verify_checksum() {
-                            eprintln!("Discarding packet with invalid checksum");
-                            continue;
-                        }
                         if let Icmpv4Message::EchoReply {
                             identifier,
                             sequence: seq,
                             payload,
-                        } = resp.message
+                            ..
+                        } = resp
                         {
                             // Other sockets' replies can arrive here too, e.g.
                             // on macOS, where every datagram ICMP socket

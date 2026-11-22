@@ -23,7 +23,7 @@ use smol::{Async, Timer, future::FutureExt};
 use socket2::{SockAddr, Socket};
 
 use crate::{
-    packet::{Icmpv4Packet, WithEchoRequest},
+    Icmpv4Message,
     socket::{
         Core, Family, SockOpts, V4, decode_received, dgram_identifier, recv_into, timed_out_error,
         to_sockaddr,
@@ -155,7 +155,7 @@ pub trait AsyncIcmpSocket {
 #[async_trait]
 impl AsyncIcmpSocket for AsyncIcmpV4Socket {
     type AddrType = Ipv4Addr;
-    type PacketType = Icmpv4Packet;
+    type PacketType = Icmpv4Message;
 
     fn set_timeout(&mut self, timeout: Option<Duration>) {
         self.core.opts.timeout = timeout;
@@ -174,9 +174,7 @@ impl AsyncIcmpSocket for AsyncIcmpV4Socket {
         dest: Self::AddrType,
         packet: Self::PacketType,
     ) -> std::io::Result<()> {
-        self.core
-            .send_bytes(dest, &packet.with_checksum().get_bytes(true))
-            .await
+        self.core.send_bytes(dest, &packet.to_bytes()).await
     }
 
     async fn rcv_from(&mut self) -> std::io::Result<(Self::PacketType, SockAddr)> {
@@ -245,15 +243,13 @@ impl AsyncDgramIcmpV4Socket {
         sequence: u16,
         payload: Vec<u8>,
     ) -> std::io::Result<()> {
-        let packet = Icmpv4Packet::with_echo_request(self.identifier(), sequence, payload)?;
-        self.core
-            .send_bytes(dest, &packet.with_checksum().get_bytes(true))
-            .await
+        let packet = Icmpv4Message::echo_request(self.identifier(), sequence, payload);
+        self.core.send_bytes(dest, &packet.to_bytes()).await
     }
 
     /// Receive a packet. Replies are not filtered; compare against
     /// [`Self::identifier`] to select those belonging to this socket.
-    pub async fn rcv_from(&mut self) -> std::io::Result<(Icmpv4Packet, SockAddr)> {
+    pub async fn rcv_from(&mut self) -> std::io::Result<(Icmpv4Message, SockAddr)> {
         self.core.recv().await
     }
 }
