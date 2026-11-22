@@ -30,6 +30,8 @@ pub(crate) struct Received {
     pub(crate) local_v4: Option<Ipv4Addr>,
     pub(crate) local_v6: Option<Ipv6Addr>,
     pub(crate) interface_index: Option<u32>,
+    #[cfg(target_os = "linux")]
+    pub(crate) extended_error: Option<ExtendedError>,
 }
 
 /// The source address of a received message.
@@ -38,6 +40,41 @@ pub(crate) enum Peer {
     V4(Ipv4Addr),
     V6(ScopedIpv6Addr),
 }
+
+/// A Linux `sock_extended_err` from the error queue (ADR 0012).
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ExtendedError {
+    pub(crate) errno: u32,
+    pub(crate) origin: u8,
+    pub(crate) typ: u8,
+    pub(crate) code: u8,
+    pub(crate) info: u32,
+    pub(crate) offender: Option<Peer>,
+}
+
+/// `struct sock_extended_err` (linux/errqueue.h); not in the libc crate.
+#[cfg(target_os = "linux")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct SockExtendedErr {
+    ee_errno: u32,
+    ee_origin: u8,
+    ee_type: u8,
+    ee_code: u8,
+    #[allow(dead_code)]
+    ee_pad: u8,
+    ee_info: u32,
+    #[allow(dead_code)]
+    ee_data: u32,
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) const ORIGIN_LOCAL: u8 = libc::SO_EE_ORIGIN_LOCAL;
+#[cfg(target_os = "linux")]
+pub(crate) const ORIGIN_ICMP: u8 = libc::SO_EE_ORIGIN_ICMP;
+#[cfg(target_os = "linux")]
+pub(crate) const ORIGIN_ICMP6: u8 = libc::SO_EE_ORIGIN_ICMP6;
 
 fn cvt(ret: libc::c_int) -> io::Result<libc::c_int> {
     if ret < 0 {
@@ -295,8 +332,45 @@ fn read_one(level: libc::c_int, typ: libc::c_int, data: &[u8], out: &mut Receive
                 out.local_v6 = Some(Ipv6Addr::from(info.ipi6_addr.s6_addr));
             }
         }
+        #[cfg(target_os = "linux")]
+        (libc::IPPROTO_IP, libc::IP_RECVERR) | (libc::IPPROTO_IPV6, libc::IPV6_RECVERR) => {
+            read_extended_error(data, out);
+        }
         _ => {}
     }
+}
+
+#[cfg(target_os = "linux")]
+fn read_extended_error(data: &[u8], out: &mut Received) {
+    let Some(ee) = read_unaligned::<SockExtendedErr>(data) else {
+        return;
+    };
+    // The offending address follows the struct (SO_EE_OFFENDER). The kernel
+    // writes as many bytes as the address needs, or zeroes (AF_UNSPEC) when
+    // there is no offender.
+    let rest = &data[mem::size_of::<SockExtendedErr>()..];
+    // SAFETY: an all-zero sockaddr_storage is a valid value.
+    let mut storage: libc::sockaddr_storage = unsafe { mem::zeroed() };
+    let n = rest.len().min(mem::size_of::<libc::sockaddr_storage>());
+    // SAFETY: copying `n` bytes into a sockaddr_storage of at least that
+    // size.
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            rest.as_ptr(),
+            (&mut storage as *mut libc::sockaddr_storage).cast::<u8>(),
+            n,
+        )
+    };
+    // SAFETY: `storage` holds the kernel's sockaddr of `n` bytes.
+    let offender = unsafe { peer(&storage, n as libc::socklen_t) };
+    out.extended_error = Some(ExtendedError {
+        errno: ee.ee_errno,
+        origin: ee.ee_origin,
+        typ: ee.ee_type,
+        code: ee.ee_code,
+        info: ee.ee_info,
+        offender,
+    });
 }
 
 /// The socket address for sending to `addr`.

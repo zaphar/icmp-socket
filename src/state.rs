@@ -109,6 +109,12 @@ pub(crate) trait Family: Sized + 'static {
     fn encode(msg: &Self::Message, out: &mut Vec<u8>);
     fn echo_request(identifier: u16, sequence: u16, payload: &[u8]) -> Self::Message;
     fn local(info: &Received) -> Option<Self::Addr>;
+    /// The ICMP message a Linux error-queue entry stands for (ADR 0012):
+    /// its type and code, the 4 bytes after the checksum rebuilt from
+    /// `info`, then the message we sent. `None` if the entry is not an ICMP
+    /// error of this family.
+    #[cfg(target_os = "linux")]
+    fn from_error_queue(err: &sys::ExtendedError, sent: &[u8]) -> Option<Vec<u8>>;
 }
 
 pub(crate) enum V4 {}
@@ -187,6 +193,27 @@ impl Family for V4 {
     fn local(info: &Received) -> Option<Ipv4Addr> {
         info.local_v4
     }
+
+    #[cfg(target_os = "linux")]
+    fn from_error_queue(err: &sys::ExtendedError, sent: &[u8]) -> Option<Vec<u8>> {
+        use crate::icmpv4::{msg_type, unreachable_code};
+        if err.origin != sys::ORIGIN_ICMP {
+            return None;
+        }
+        let info = err.info.to_be_bytes();
+        let rest = match (err.typ, err.code) {
+            (msg_type::DESTINATION_UNREACHABLE, unreachable_code::FRAGMENTATION_NEEDED) => {
+                [0, 0, info[2], info[3]]
+            }
+            (msg_type::PARAMETER_PROBLEM, _) => [info[3], 0, 0, 0],
+            _ => [0; 4],
+        };
+        let mut bytes = vec![err.typ, err.code, 0, 0];
+        bytes.extend_from_slice(&rest);
+        bytes.extend_from_slice(sent);
+        crate::checksum::fill(&mut bytes, 0);
+        Some(bytes)
+    }
 }
 
 pub(crate) enum V6 {}
@@ -245,6 +272,22 @@ impl Family for V6 {
         Icmpv6Message::echo_request(identifier, sequence, payload.to_vec())
     }
 
+    #[cfg(target_os = "linux")]
+    fn from_error_queue(err: &sys::ExtendedError, sent: &[u8]) -> Option<Vec<u8>> {
+        use crate::icmpv6::msg_type;
+        if err.origin != sys::ORIGIN_ICMP6 {
+            return None;
+        }
+        let rest = match err.typ {
+            msg_type::PACKET_TOO_BIG | msg_type::PARAMETER_PROBLEM => err.info.to_be_bytes(),
+            _ => [0; 4],
+        };
+        let mut bytes = vec![err.typ, err.code, 0, 0];
+        bytes.extend_from_slice(&rest);
+        bytes.extend_from_slice(sent);
+        Some(bytes)
+    }
+
     fn local(info: &Received) -> Option<ScopedIpv6Addr> {
         let addr = info.local_v6?;
         let scoped = addr.is_unicast_link_local() || addr.is_multicast();
@@ -277,6 +320,8 @@ pub(crate) fn dgram_identifier(fd: BorrowedFd<'_>) -> u16 {
 
 /// The state every socket kind shares.
 pub(crate) struct Core<F: Family> {
+    /// Datagram sockets on Linux read ICMP errors from the error queue.
+    error_queue: bool,
     pub(crate) buf: Vec<u8>,
     pub(crate) max: usize,
     send_buf: Vec<u8>,
@@ -288,9 +333,11 @@ pub(crate) struct Core<F: Family> {
 
 impl<F: Family> Core<F> {
     /// Set up a newly opened socket.
-    pub(crate) fn new(fd: BorrowedFd<'_>, _raw: bool) -> io::Result<Self> {
-        F::enable_info(fd, false)?;
+    pub(crate) fn new(fd: BorrowedFd<'_>, raw: bool) -> io::Result<Self> {
+        let error_queue = cfg!(target_os = "linux") && !raw;
+        F::enable_info(fd, error_queue)?;
         Ok(Self {
+            error_queue,
             buf: Vec::with_capacity(DEFAULT_MAX_MESSAGE_SIZE),
             max: DEFAULT_MAX_MESSAGE_SIZE,
             send_buf: Vec::new(),
@@ -323,6 +370,7 @@ impl<F: Family> Core<F> {
     pub(crate) fn recv<M: RecvMode<F>>(&mut self) -> RecvMachine<'_, F, M> {
         RecvMachine {
             core: Some(self),
+            error_queue: None,
             outcome: None,
             mode: PhantomData,
         }
@@ -475,6 +523,9 @@ impl<F: Family> RecvMode<F> for Raw {
 /// fills in [`RecvInfo`].
 pub(crate) struct RecvMachine<'a, F: Family, M: RecvMode<F>> {
     core: Option<&'a mut Core<F>>,
+    /// A receive failed on a socket with an error queue: read the queue
+    /// next. Holds the receive's error, for when the queue is empty.
+    error_queue: Option<io::Error>,
     outcome: Option<Result<(usize, RecvInfo<F::Addr>), RecvError<F::Proto>>>,
     mode: PhantomData<M>,
 }
@@ -530,6 +581,49 @@ impl<F: Family, M: RecvMode<F>> RecvMachine<'_, F, M> {
     }
 }
 
+impl<F: Family, M: RecvMode<F>> RecvMachine<'_, F, M> {
+    /// Read one entry of the Linux error queue and turn it into a received
+    /// ICMP message (ADR 0012). Without an entry, the receive fails with
+    /// `error`, the receive's own error.
+    #[cfg(target_os = "linux")]
+    fn read_error_queue(&mut self, fd: BorrowedFd<'_>, error: io::Error) {
+        let core = self.core();
+        let read_size = core.max + F::HEADER_ROOM;
+        let entry = match sys::recvmsg(fd, &mut core.buf, read_size, true) {
+            Ok(received) => received.extended_error,
+            Err(e) if sys::would_block(&e) => None,
+            Err(e) => {
+                self.outcome = Some(Err(RecvError::Io(e)));
+                return;
+            }
+        };
+        let Some(entry) = entry else {
+            self.outcome = Some(Err(RecvError::Io(error)));
+            return;
+        };
+        if entry.origin == sys::ORIGIN_LOCAL {
+            // An error from our own stack, not an ICMP message.
+            let errno = entry.errno as i32;
+            self.outcome = Some(Err(RecvError::Io(io::Error::from_raw_os_error(errno))));
+            return;
+        }
+        let Some(bytes) = F::from_error_queue(&entry, &core.buf) else {
+            self.outcome = Some(Err(RecvError::Io(error)));
+            return;
+        };
+        core.buf = bytes;
+        self.process(Received {
+            from: entry.offender,
+            ..Received::default()
+        });
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn read_error_queue(&mut self, _fd: BorrowedFd<'_>, error: io::Error) {
+        self.outcome = Some(Err(RecvError::Io(error)));
+    }
+}
+
 impl<'a, F: Family, M: RecvMode<F>> Machine for RecvMachine<'a, F, M> {
     type Output = M::Output<'a>;
 
@@ -540,13 +634,19 @@ impl<'a, F: Family, M: RecvMode<F>> Machine for RecvMachine<'a, F, M> {
                     self.core.take().expect("a finished machine was used again");
                 Next::Done(M::output(core, outcome))
             }
+            None if self.error_queue.is_some() => Next::Io(Interest::None),
             None => Next::Io(Interest::Read),
         }
     }
 
     fn perform(&mut self, fd: BorrowedFd<'_>) -> Progress {
+        if let Some(error) = self.error_queue.take() {
+            self.read_error_queue(fd, error);
+            return Progress::Continue;
+        }
         let core = self.core();
         let read_size = core.max + F::HEADER_ROOM;
+        let has_error_queue = core.error_queue;
         match sys::recvmsg(fd, &mut core.buf, read_size, false) {
             Ok(received) => {
                 self.process(received);
@@ -554,6 +654,13 @@ impl<'a, F: Family, M: RecvMode<F>> Machine for RecvMachine<'a, F, M> {
             }
             Err(e) if sys::would_block(&e) => Progress::WouldBlock,
             Err(e) if e.kind() == io::ErrorKind::Interrupted => Progress::Continue,
+            // With IP_RECVERR, an ICMP error for one of our packets makes the
+            // next receive fail once with its errno; the error itself waits
+            // in the error queue.
+            Err(e) if has_error_queue => {
+                self.error_queue = Some(e);
+                Progress::Continue
+            }
             Err(e) => {
                 self.outcome = Some(Err(RecvError::Io(e)));
                 Progress::Continue
