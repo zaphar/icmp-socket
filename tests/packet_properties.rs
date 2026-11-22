@@ -14,6 +14,9 @@
 //! Property tests for message parsing, serialization and checksums.
 use std::net::Ipv6Addr;
 
+use icmp_socket::options::{
+    ExtensionObjectFormat, NdOptionFormat, OptionFormat, Options, OptionsBuilder, RplOptionFormat,
+};
 use icmp_socket::{Icmpv4Message, Icmpv6Message};
 use proptest::prelude::*;
 
@@ -30,7 +33,28 @@ fn same_but_checksum(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a[..2] == b[..2] && a[4..] == b[4..]
 }
 
+/// If every option in `bytes` decodes, building the options again gives the
+/// same bytes. Reading never panics.
+fn options_round_trip<F: OptionFormat>(bytes: &[u8]) -> Result<(), TestCaseError> {
+    let decoded: Result<Vec<_>, _> = Options::<F>::new(bytes).collect();
+    if let Ok(opts) = decoded {
+        let mut builder = OptionsBuilder::<F>::new();
+        for opt in opts {
+            builder = builder.option(opt.kind, opt.data).unwrap();
+        }
+        prop_assert_eq!(builder.build(), bytes.to_vec());
+    }
+    Ok(())
+}
+
 proptest! {
+    #[test]
+    fn option_lists_round_trip(bytes in prop::collection::vec(any::<u8>(), 0..96)) {
+        options_round_trip::<NdOptionFormat>(&bytes)?;
+        options_round_trip::<ExtensionObjectFormat>(&bytes)?;
+        options_round_trip::<RplOptionFormat>(&bytes)?;
+    }
+
     #[test]
     fn v4_parse_never_panics_and_round_trips(bytes in message_bytes()) {
         if let Ok(msg) = Icmpv4Message::parse(&bytes) {

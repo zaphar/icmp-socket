@@ -19,6 +19,7 @@ mod checksum;
 pub mod error;
 pub mod icmpv4;
 pub mod icmpv6;
+pub mod options;
 pub mod socket;
 mod wire;
 
