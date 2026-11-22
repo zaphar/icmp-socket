@@ -20,17 +20,19 @@ mod checksum;
 pub mod error;
 pub mod icmpv4;
 pub mod icmpv6;
+pub mod machine;
 pub mod options;
 pub mod socket;
+mod state;
+mod sys;
 mod wire;
 
 pub use addr::ScopedIpv6Addr;
-pub use error::{ModelledTypeError, ParseError};
+pub use error::{Ipv4RecvError, ModelledTypeError, ParseError, RecvError};
 pub use icmpv4::{Icmpv4Message, Icmpv4Other};
 pub use icmpv6::{Icmpv6Message, Icmpv6Other};
-pub use socket::{DgramIcmpSocket4, IcmpSocket, IcmpSocket4, IcmpSocket6};
-#[cfg(feature = "smol")]
-pub mod smol;
+pub use socket::{DgramSocket4, DgramState4, RawSocket4, RawSocket6, RawState4, RawState6};
+pub use state::{RecvInfo, SendOptions};
 
 // Compile the README examples as doctests so they stay correct.
 #[cfg(doctest)]

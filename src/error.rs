@@ -69,3 +69,94 @@ impl From<ParseError> for std::io::Error {
         std::io::Error::new(std::io::ErrorKind::InvalidData, err)
     }
 }
+
+/// Why a receive failed.
+///
+/// `P` holds the failures only one protocol has: [`Ipv4RecvError`] for
+/// ICMPv4 sockets and [`std::convert::Infallible`] for ICMPv6 sockets, so a
+/// `match` on an ICMPv6 receive error can leave out the `Protocol` arm.
+#[derive(Debug)]
+pub enum RecvError<P> {
+    /// The operating system reported an error.
+    Io(std::io::Error),
+    /// The socket's read timeout expired.
+    Timeout,
+    /// The message was larger than the socket's maximum message size and
+    /// was truncated; see `set_max_message_size`.
+    Truncated { buf_size: usize },
+    /// The message could not be parsed.
+    Parse(ParseError),
+    /// A failure only this protocol has.
+    Protocol(P),
+}
+
+/// Receive failures only ICMPv4 sockets have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ipv4RecvError {
+    /// The IPv4 header the system delivered before the message is invalid.
+    InvalidIpHeader,
+    /// The message's checksum is wrong. (ICMPv6 sockets never see this: the
+    /// kernel drops such packets.)
+    BadChecksum,
+}
+
+impl<P: fmt::Display> fmt::Display for RecvError<P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RecvError::Io(e) => write!(f, "{}", e),
+            RecvError::Timeout => write!(f, "receive timed out"),
+            RecvError::Truncated { buf_size } => write!(
+                f,
+                "received message was larger than the {} byte maximum message size and was truncated",
+                buf_size
+            ),
+            RecvError::Parse(e) => write!(f, "{}", e),
+            RecvError::Protocol(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl<P: std::error::Error + 'static> std::error::Error for RecvError<P> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            RecvError::Io(e) => Some(e),
+            RecvError::Parse(e) => Some(e),
+            RecvError::Protocol(e) => Some(e),
+            RecvError::Timeout | RecvError::Truncated { .. } => None,
+        }
+    }
+}
+
+impl fmt::Display for Ipv4RecvError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Ipv4RecvError::InvalidIpHeader => write!(f, "invalid IPv4 header"),
+            Ipv4RecvError::BadChecksum => write!(f, "bad ICMP checksum"),
+        }
+    }
+}
+
+impl std::error::Error for Ipv4RecvError {}
+
+/// `Io(e)` becomes `e`. Every other variant is kept inside the `io::Error`
+/// (recover it with `get_ref()` and `downcast_ref`): `Timeout` has kind
+/// `TimedOut`, and `Truncated`, `Parse` and `Protocol` have kind
+/// `InvalidData`.
+impl<P> From<RecvError<P>> for std::io::Error
+where
+    P: std::error::Error + Send + Sync + 'static,
+{
+    fn from(err: RecvError<P>) -> Self {
+        match err {
+            RecvError::Io(e) => e,
+            RecvError::Timeout => std::io::Error::new(std::io::ErrorKind::TimedOut, err),
+            other => std::io::Error::new(std::io::ErrorKind::InvalidData, other),
+        }
+    }
+}
+
+impl<P> From<ParseError> for RecvError<P> {
+    fn from(err: ParseError) -> Self {
+        RecvError::Parse(err)
+    }
+}

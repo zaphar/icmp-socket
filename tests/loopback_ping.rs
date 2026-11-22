@@ -11,264 +11,162 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//! On-the-wire smoke test that validates the datagram receive path against a
-//! real kernel.
+//! On-the-wire tests of the datagram sockets against a real kernel.
 //!
-//! This is where our cross-platform assumption is actually exercised: Linux
-//! datagram sockets deliver ICMP replies without an IPv4 header while macOS
-//! includes it, and `parse_auto` must decode both. It is `#[ignore]`d because
-//! it needs a working ICMP datagram socket (on Linux that means
-//! `net.ipv4.ping_group_range` must include the running user's gid). Run it
-//! explicitly with `cargo test -- --ignored`.
+//! These check the behavior the crate makes the same on every system: Linux
+//! datagram sockets deliver replies without an IPv4 header and macOS ones
+//! with it, the identifier comes from different places, and so on. They are
+//! `#[ignore]`d because they need working ICMP datagram sockets (on Linux,
+//! `net.ipv4.ping_group_range` must include the user's group). Run them with
+//! `cargo test --test loopback_ping -- --ignored --test-threads=1`.
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use icmp_socket::*;
 
+const LOCALHOST: Ipv4Addr = Ipv4Addr::LOCALHOST;
+
+fn socket() -> DgramSocket4 {
+    let mut socket = DgramSocket4::bind(Ipv4Addr::UNSPECIFIED).unwrap_or_else(|e| {
+        panic!(
+            "could not open an ICMP datagram socket ({}); on Linux set \
+             net.ipv4.ping_group_range to include this user's group",
+            e
+        )
+    });
+    socket
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    socket
+}
+
+/// Receive until our own reply with `sequence` arrives.
+fn await_reply(socket: &mut DgramSocket4, sequence: u16) -> Icmpv4Message {
+    loop {
+        let (msg, from) = socket.recv_from().expect("failed to receive a reply");
+        if from != LOCALHOST {
+            continue;
+        }
+        if let Icmpv4Message::EchoReply {
+            identifier,
+            sequence: seq,
+            ..
+        } = msg
+        {
+            if identifier == socket.identifier() && seq == sequence {
+                return msg;
+            }
+        }
+    }
+}
+
 #[test]
 #[ignore]
 fn dgram_loopback_roundtrip() {
-    let localhost = Ipv4Addr::new(127, 0, 0, 1);
-    let mut socket = match DgramIcmpSocket4::new() {
-        Ok(s) => s,
-        Err(e) => panic!(
-            "could not open an ICMP datagram socket ({}); on Linux set \
-             net.ipv4.ping_group_range to include this user's gid",
-            e
-        ),
-    };
-    socket
-        .bind(Ipv4Addr::new(0, 0, 0, 0))
-        .expect("failed to bind");
-    socket.set_timeout(Some(Duration::from_secs(2)));
-
-    socket
-        .send(localhost, 1, vec![0x20; 16])
-        .expect("failed to send");
-
-    // Read until we see the reply for our destination or time out. The kernel
-    // may rewrite the identifier on datagram sockets, so match on the reply
-    // type and sequence rather than the identifier.
-    loop {
-        let (resp, addr) = socket.rcv_from().expect("failed to receive a reply");
-        let from = *addr
-            .as_socket_ipv4()
-            .expect("reply was not an IPv4 address")
-            .ip();
-        if from != localhost {
-            continue;
-        }
-        // Match our own sequence; ignore any stray ICMP on the loopback
-        // interface (on macOS datagram sockets share identifier 0).
-        if let Icmpv4Message::EchoReply { sequence, .. } = resp {
-            if sequence == 1 {
-                return;
-            }
-        }
+    let mut socket = socket();
+    socket.send_echo(LOCALHOST, 1, &[0x20; 16]).unwrap();
+    match await_reply(&mut socket, 1) {
+        Icmpv4Message::EchoReply { payload, .. } => assert_eq!(payload, vec![0x20; 16]),
+        other => panic!("expected an echo reply, got {:?}", other),
     }
 }
 
 #[test]
 #[ignore]
-fn dgram_recv_buffer_truncation() {
-    let localhost = Ipv4Addr::new(127, 0, 0, 1);
-    let mut socket = match DgramIcmpSocket4::new() {
-        Ok(s) => s,
-        Err(e) => panic!("could not open an ICMP datagram socket ({})", e),
-    };
-    socket
-        .bind(Ipv4Addr::new(0, 0, 0, 0))
-        .expect("failed to bind");
-    socket.set_timeout(Some(Duration::from_secs(2)));
-
-    // An 8 byte buffer cannot hold the echo reply, so rcv_from must report a
-    // truncation error rather than a partial packet.
-    socket.set_read_buffer_size(8);
-    socket
-        .send(localhost, 1, vec![0x20; 32])
-        .expect("failed to send");
-    let err = socket
-        .rcv_from()
-        .expect_err("expected a truncation error with an 8 byte buffer");
-    assert!(
-        err.to_string().contains("truncat"),
-        "expected a truncation error, got: {}",
-        err
-    );
-
-    // With a large buffer the same exchange succeeds.
-    socket.set_read_buffer_size(2048);
-    socket
-        .send(localhost, 2, vec![0x20; 32])
-        .expect("failed to send");
-    loop {
-        let (resp, addr) = socket.rcv_from().expect("failed to receive a reply");
-        if *addr
-            .as_socket_ipv4()
-            .expect("reply was not an IPv4 address")
-            .ip()
-            != localhost
-        {
-            continue;
-        }
-        if let Icmpv4Message::EchoReply { sequence, .. } = resp {
-            if sequence == 2 {
-                return;
-            }
-        }
+fn dgram_message_too_large_is_truncated() {
+    let mut socket = socket();
+    // An 8 byte maximum cannot hold the 40 byte reply.
+    socket.set_max_message_size(8);
+    socket.send_echo(LOCALHOST, 2, &[0x20; 32]).unwrap();
+    match socket.recv_from() {
+        Err(RecvError::Truncated { buf_size: 8 }) => {}
+        other => panic!("expected a truncation error, got {:?}", other),
     }
 }
 
 #[test]
 #[ignore]
-fn dgram_recv_buffer_exact_fit() {
-    let localhost = Ipv4Addr::new(127, 0, 0, 1);
-    let mut socket = match DgramIcmpSocket4::new() {
-        Ok(s) => s,
-        Err(e) => panic!("could not open an ICMP datagram socket ({})", e),
-    };
-    socket
-        .bind(Ipv4Addr::new(0, 0, 0, 0))
-        .expect("failed to bind");
-    socket.set_timeout(Some(Duration::from_secs(2)));
-
-    // The reply is an 8 byte ICMP header and a 32 byte payload. macOS also
-    // delivers the 20 byte IPv4 header; Linux does not.
-    let reply_len = if cfg!(target_os = "macos") { 60 } else { 40 };
-    socket.set_read_buffer_size(reply_len);
-    socket
-        .send(localhost, 3, vec![0x20; 32])
-        .expect("failed to send");
-    loop {
-        let (resp, addr) = socket
-            .rcv_from()
-            .expect("a reply that fills the buffer exactly is not truncated");
-        if *addr
-            .as_socket_ipv4()
-            .expect("reply was not an IPv4 address")
-            .ip()
-            != localhost
-        {
-            continue;
-        }
-        if let Icmpv4Message::EchoReply { sequence, .. } = resp {
-            if sequence == 3 {
-                return;
-            }
-        }
-    }
+fn dgram_message_of_exactly_the_maximum_fits() {
+    let mut socket = socket();
+    // The reply is an 8 byte ICMP header and a 32 byte payload. The maximum
+    // counts ICMP bytes on every system, although macOS also delivers the
+    // IPv4 header.
+    socket.set_max_message_size(40);
+    socket.send_echo(LOCALHOST, 3, &[0x20; 32]).unwrap();
+    await_reply(&mut socket, 3);
 }
 
 #[test]
 #[ignore]
-fn dgram_recv_timeout_is_timed_out() {
-    let mut socket = match DgramIcmpSocket4::new() {
-        Ok(s) => s,
-        Err(e) => panic!("could not open an ICMP datagram socket ({})", e),
-    };
+fn dgram_read_timeout_is_timeout() {
+    let mut socket = socket();
     socket
-        .bind(Ipv4Addr::new(0, 0, 0, 0))
-        .expect("failed to bind");
-    socket.set_timeout(Some(Duration::from_millis(100)));
-    // Nothing was sent, so the receive times out.
-    let err = socket
-        .rcv_from()
-        .expect_err("expected a timeout with nothing sent");
-    assert_eq!(err.kind(), std::io::ErrorKind::TimedOut, "got: {}", err);
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    match socket.recv_from() {
+        Err(RecvError::Timeout) => {}
+        other => panic!("expected a timeout with nothing sent, got {:?}", other),
+    }
 }
 
 #[test]
 #[ignore]
 fn dgram_identifier_after_send_without_bind() {
-    let localhost = Ipv4Addr::new(127, 0, 0, 1);
-    let mut socket = match DgramIcmpSocket4::new() {
-        Ok(s) => s,
-        Err(e) => panic!("could not open an ICMP datagram socket ({})", e),
-    };
-    socket.set_timeout(Some(Duration::from_secs(2)));
-    // No bind: on Linux the kernel binds the socket on this send and puts
-    // the new local port into the packet's identifier.
+    let mut socket = DgramSocket4::open().unwrap();
     socket
-        .send(localhost, 4, vec![0x20; 16])
-        .expect("failed to send");
-    loop {
-        let (resp, _) = socket.rcv_from().expect("failed to receive a reply");
-        if let Icmpv4Message::EchoReply {
-            identifier,
-            sequence: 4,
-            ..
-        } = resp
-        {
-            assert_eq!(identifier, socket.identifier());
-            return;
-        }
-    }
-}
-
-#[test]
-#[ignore]
-fn dgram_reply_carries_identifier() {
-    let localhost = Ipv4Addr::new(127, 0, 0, 1);
-    let mut socket = match DgramIcmpSocket4::new() {
-        Ok(s) => s,
-        Err(e) => panic!("could not open an ICMP datagram socket ({})", e),
-    };
-    socket
-        .bind(Ipv4Addr::new(0, 0, 0, 0))
-        .expect("failed to bind");
-    socket.set_timeout(Some(Duration::from_secs(2)));
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    // On Linux the kernel binds the socket on this send and puts its new
+    // local port into the identifier.
+    socket.send_echo(LOCALHOST, 4, &[0x20; 16]).unwrap();
+    await_reply(&mut socket, 4);
     if cfg!(target_os = "macos") {
         assert_eq!(socket.identifier(), std::process::id() as u16);
     }
-    socket
-        .send(localhost, 6, vec![0x20; 16])
-        .expect("failed to send");
+}
+
+#[test]
+#[ignore]
+fn dgram_recv_with_info_reports_the_packet() {
+    let mut socket = socket();
+    socket.send_echo(LOCALHOST, 5, &[0x20; 16]).unwrap();
     loop {
-        let (resp, _) = socket.rcv_from().expect("failed to receive a reply");
-        if let Icmpv4Message::EchoReply {
-            identifier,
-            sequence: 6,
-            ..
-        } = resp
-        {
-            assert_eq!(identifier, socket.identifier());
+        let (msg, info) = socket.recv_with_info().unwrap();
+        if let Icmpv4Message::EchoReply { sequence: 5, .. } = msg {
+            assert_eq!(info.source(), LOCALHOST);
+            assert_eq!(info.local_addr(), Some(LOCALHOST));
+            assert!(info.hop_limit().is_some(), "{:?}", info);
+            assert!(info.interface_index().is_some(), "{:?}", info);
             return;
         }
     }
 }
 
-#[cfg(feature = "smol")]
 #[test]
 #[ignore]
-fn async_dgram_loopback_roundtrip() {
-    let localhost = Ipv4Addr::new(127, 0, 0, 1);
-    // `icmp_socket::*` brings the crate's own `smol` module into scope, so
-    // reach the external crate with a leading `::`.
-    ::smol::block_on(async {
-        let mut socket = match DgramIcmpSocket4::new() {
-            Ok(s) => s.into_async().expect("failed to register with smol"),
-            Err(e) => panic!("could not open an ICMP datagram socket ({})", e),
-        };
-        socket
-            .bind(Ipv4Addr::new(0, 0, 0, 0))
-            .await
-            .expect("failed to bind");
-        socket.set_timeout(Some(Duration::from_secs(2)));
-        socket
-            .send(localhost, 7, vec![0x20; 16])
-            .await
-            .expect("failed to send");
-        loop {
-            let (resp, _) = socket.rcv_from().await.expect("failed to receive a reply");
-            if let Icmpv4Message::EchoReply {
-                identifier,
-                sequence: 7,
-                ..
-            } = resp
-            {
-                assert_eq!(identifier, socket.identifier());
-                return;
-            }
+fn dgram_recv_raw_returns_icmp_bytes() {
+    let mut socket = socket();
+    socket.send_echo(LOCALHOST, 6, &[0x20; 16]).unwrap();
+    loop {
+        let (bytes, info) = socket.recv_raw().unwrap();
+        // ICMP bytes on every system: no IPv4 header in front.
+        let msg = Icmpv4Message::parse(bytes).unwrap();
+        if let Icmpv4Message::EchoReply { sequence: 6, .. } = msg {
+            assert!(Icmpv4Message::verify_checksum(bytes));
+            assert_eq!(info.source(), LOCALHOST);
+            return;
         }
-    });
+    }
+}
+
+#[test]
+#[ignore]
+fn dgram_send_options_apply_to_one_send() {
+    let mut socket = socket();
+    socket
+        .send_echo_with_options(LOCALHOST, 7, &[0x20; 8], &SendOptions::new().hop_limit(9))
+        .unwrap();
+    await_reply(&mut socket, 7);
+    socket.send_echo(LOCALHOST, 8, &[0x20; 8]).unwrap();
+    await_reply(&mut socket, 8);
 }

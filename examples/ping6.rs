@@ -11,97 +11,61 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use std::{
-    net::Ipv6Addr,
-    time::{Duration, Instant},
-};
+//! Ping an IPv6 address with a raw socket (needs root or CAP_NET_RAW).
+//!
+//! `cargo run --example ping6 -- ::1` or, for a link-local address,
+//! `cargo run --example ping6 -- fe80::1%en0`.
+use std::time::{Duration, Instant};
 
-use icmp_socket::socket::IcmpSocket;
-use icmp_socket::*;
+use icmp_socket::{Icmpv6Message, RawSocket6, RecvError, ScopedIpv6Addr};
 
-/// The identifier in our echo requests. A real tool would use a value unique
-/// to the process, e.g. its process ID.
+/// The identifier in our echo requests. A raw socket receives ICMPv6
+/// packets for every process on the host, so match replies on it and the
+/// sequence.
 const IDENTIFIER: u16 = 42;
 
-pub fn main() {
-    let address = std::env::args().nth(1).unwrap_or("::1".to_owned());
-    let parsed_addr = address.parse::<Ipv6Addr>().unwrap();
-    // A raw socket receives ICMP packets for every process on this host, so
-    // match a reply on its source, identifier and sequence.
-    let packet_handler = |pkt: Icmpv6Message,
-                          send_time: Instant,
-                          addr: Ipv6Addr,
-                          expected_sequence: u16|
-     -> Option<()> {
-        let now = Instant::now();
-        let elapsed = now - send_time;
-        if addr == parsed_addr {
-            if let Icmpv6Message::EchoReply {
-                identifier: IDENTIFIER,
-                sequence,
-                payload,
-                ..
-            } = pkt
-            {
-                if sequence != expected_sequence {
-                    return None;
-                }
-                println!(
-                    "Ping {} seq={} time={}ms size={}",
-                    addr,
-                    sequence,
-                    (elapsed.as_micros() as f64) / 1000.0,
-                    payload.len()
-                );
-            } else {
-                //eprintln!("Discarding non-reply {:?}", pkt);
-                return None;
-            }
-            Some(())
-        } else {
-            eprintln!("Discarding packet from {}", addr);
-            None
-        }
-    };
-    let mut socket6 = IcmpSocket6::new().unwrap();
-    socket6.bind("::0".parse::<Ipv6Addr>().unwrap()).unwrap();
-    let mut sequence = 0 as u16;
-    loop {
-        let packet = Icmpv6Message::echo_request(
-            IDENTIFIER,
-            sequence,
-            vec![
-                0x20, 0x20, 0x75, 0x73, 0x74, 0x20, 0x61, 0x20, 0x66, 0x6c, 0x65, 0x73, 0x68, 0x20,
-                0x77, 0x6f, 0x75, 0x6e, 0x64, 0x20, 0x20, 0x74, 0x69, 0x73, 0x20, 0x62, 0x75, 0x74,
-                0x20, 0x61, 0x20, 0x73, 0x63, 0x72, 0x61, 0x74, 0x63, 0x68, 0x20, 0x20, 0x6b, 0x6e,
-                0x69, 0x67, 0x68, 0x74, 0x73, 0x20, 0x6f, 0x66, 0x20, 0x6e, 0x69, 0x20, 0x20, 0x20,
-            ],
-        );
-        let send_time = Instant::now();
-        socket6
-            .send_to(address.parse::<Ipv6Addr>().unwrap(), packet)
-            .unwrap();
-        socket6.set_timeout(Some(Duration::from_secs(1)));
+fn main() -> std::io::Result<()> {
+    let target: ScopedIpv6Addr = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "::1".to_owned())
+        .parse()
+        .expect("argument must be an IPv6 address, optionally with %interface");
+    let mut socket = RawSocket6::open()?;
+    socket.set_read_timeout(Some(Duration::from_secs(1)))?;
+
+    for sequence in 0u16.. {
+        let request = Icmpv6Message::echo_request(IDENTIFIER, sequence, vec![0x20; 56]);
+        let sent = Instant::now();
+        socket.send_to(target, &request)?;
         loop {
-            let (resp, sock_addr) = match socket6.rcv_from() {
-                Ok(tpl) => tpl,
-                Err(e) => {
-                    eprintln!("{:?}", e);
+            match socket.recv_from() {
+                Ok((
+                    Icmpv6Message::EchoReply {
+                        identifier: IDENTIFIER,
+                        sequence: seq,
+                        payload,
+                        ..
+                    },
+                    from,
+                )) if from.addr == target.addr && seq == sequence => {
+                    println!(
+                        "Ping {} seq={} time={:.3}ms size={}",
+                        from,
+                        seq,
+                        sent.elapsed().as_secs_f64() * 1000.0,
+                        payload.len()
+                    );
                     break;
                 }
-            };
-            if packet_handler(
-                resp,
-                send_time,
-                *sock_addr.as_socket_ipv6().unwrap().ip(),
-                sequence,
-            )
-            .is_some()
-            {
-                std::thread::sleep(Duration::from_millis(1000));
-                break;
+                Ok(_) => continue, // someone else's packet
+                Err(RecvError::Timeout) => {
+                    println!("Ping {} seq={} timed out", target, sequence);
+                    break;
+                }
+                Err(e) => eprintln!("receive failed: {}", e),
             }
         }
-        sequence = sequence.wrapping_add(1);
+        std::thread::sleep(Duration::from_secs(1));
     }
+    Ok(())
 }

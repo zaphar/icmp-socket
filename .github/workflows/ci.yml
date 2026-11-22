@@ -24,12 +24,6 @@ jobs:
       - name: Test (default features)
         run: cargo test
 
-      - name: Build (smol feature)
-        run: cargo build --features smol --all-targets
-
-      - name: Test (smol feature)
-        run: cargo test --features smol
-
       # Validate the datagram receive path against the real kernel on each OS.
       # This is what proves parse_auto handles both the Linux (no IP header)
       # and macOS (IP header included) delivery behaviors, rather than trusting
@@ -42,7 +36,7 @@ jobs:
       # datagram sockets share identifier 0, so replies are not demuxed between
       # concurrent sockets.
       - name: Loopback ping smoke test
-        run: cargo test --features smol --test loopback_ping -- --ignored --test-threads=1
+        run: cargo test --test loopback_ping -- --ignored --test-threads=1
 
       # Raw sockets need root. A cargo runner runs only the raw test binary
       # under sudo, so the build stays unprivileged.
@@ -50,7 +44,7 @@ jobs:
         run: |
           host=$(rustc -vV | sed -n 's/^host: //p' | tr 'a-z-' 'A-Z_')
           export "CARGO_TARGET_${host}_RUNNER=sudo -E"
-          cargo test --features smol --test raw_loopback -- --ignored --test-threads=1
+          cargo test --test raw_loopback -- --ignored --test-threads=1
 
   # The crate promises rust-version in Cargo.toml. Build the library with
   # exactly that toolchain. Tests are not run here: dev-dependencies may need
