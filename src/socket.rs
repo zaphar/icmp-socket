@@ -17,14 +17,14 @@
 //! The socket is associated to both an address type and packet type.
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::{
-    convert::{Into, TryFrom, TryInto},
+    convert::{Into, TryFrom},
     mem::MaybeUninit,
     time::Duration,
 };
 
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 
-use crate::packet::{Icmpv4Packet, Icmpv6Packet, WithEchoRequest};
+use crate::packet::{Icmpv4Packet, Icmpv6Packet, PacketParseError, WithEchoRequest};
 
 pub fn ip_to_socket(ip: &IpAddr) -> SocketAddr {
     SocketAddr::new(*ip, 0)
@@ -67,20 +67,97 @@ pub struct Opts {
 /// bigger buffer via `set_read_buffer_size`.
 const DEFAULT_RECV_BUFFER_SIZE: usize = 2048;
 
-/// Shared low-level state and operations for the ICMPv4 sockets. This keeps the
-/// public socket types thin: the raw and datagram sockets differ only in how a
-/// packet is sent, not in binding, receiving, or option handling.
-struct Icmp4Core {
-    inner: Socket,
-    bound_to: Option<Ipv4Addr>,
-    buf: Vec<u8>,
-    opts: Opts,
+/// The differences between ICMPv4 and ICMPv6 that the socket core needs.
+pub(crate) trait Family {
+    const DOMAIN: Domain;
+    const PROTOCOL: Protocol;
+    type Addr: Copy + Into<IpAddr>;
+    type Packet;
+
+    /// Set the hop limit (TTL) for unicast packets.
+    fn set_hops(sock: &Socket, hops: u32) -> std::io::Result<()>;
+
+    /// Decode a received message. Whether it starts with an IP header
+    /// depends on the protocol, the OS and the socket type.
+    fn decode(bytes: &[u8]) -> Result<Self::Packet, PacketParseError>;
 }
 
-impl Icmp4Core {
-    fn from_socket(inner: Socket) -> std::io::Result<Self> {
+pub(crate) enum V4 {}
+
+impl Family for V4 {
+    const DOMAIN: Domain = Domain::IPV4;
+    const PROTOCOL: Protocol = Protocol::ICMPV4;
+    type Addr = Ipv4Addr;
+    type Packet = Icmpv4Packet;
+
+    fn set_hops(sock: &Socket, hops: u32) -> std::io::Result<()> {
+        sock.set_ttl(hops)
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Icmpv4Packet, PacketParseError> {
+        // Whether an IPv4 header is present depends on the OS and socket
+        // type, so detect it from the bytes rather than assuming.
+        Icmpv4Packet::parse_auto(bytes)
+    }
+}
+
+pub(crate) enum V6 {}
+
+impl Family for V6 {
+    const DOMAIN: Domain = Domain::IPV6;
+    const PROTOCOL: Protocol = Protocol::ICMPV6;
+    type Addr = Ipv6Addr;
+    type Packet = Icmpv6Packet;
+
+    fn set_hops(sock: &Socket, hops: u32) -> std::io::Result<()> {
+        sock.set_unicast_hops_v6(hops)
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Icmpv6Packet, PacketParseError> {
+        // IPv6 sockets never deliver the IPv6 header.
+        Icmpv6Packet::parse(bytes)
+    }
+}
+
+/// The socket address for an IP address. ICMP has no ports, so the port is 0.
+pub(crate) fn to_sockaddr<A: Into<IpAddr>>(addr: A) -> SockAddr {
+    ip_to_socket(&addr.into()).into()
+}
+
+/// The bound local port of a socket. On a datagram (ping) socket this is the
+/// ICMP identifier the kernel associates with the socket.
+pub(crate) fn local_port(sock: &Socket) -> std::io::Result<u16> {
+    let addr = sock.local_addr()?;
+    Ok(addr.as_socket().map(|s| s.port()).unwrap_or(0))
+}
+
+/// Decode the first `read_count` bytes of a receive buffer, reporting a
+/// possible truncation instead of a partial packet.
+pub(crate) fn decode_received<F: Family>(
+    buf: &[u8],
+    read_count: usize,
+) -> std::io::Result<F::Packet> {
+    // A full buffer means the packet may have been truncated on read.
+    if read_count == buf.len() {
+        return Err(truncated_error());
+    }
+    Ok(F::decode(&buf[..read_count])?)
+}
+
+/// Shared low-level state and operations for the blocking sockets. This keeps
+/// the public socket types thin: they differ only in how a packet is sent,
+/// not in binding, receiving, or option handling.
+pub(crate) struct Core<F: Family> {
+    pub(crate) inner: Socket,
+    pub(crate) bound_to: Option<F::Addr>,
+    pub(crate) buf: Vec<u8>,
+    pub(crate) opts: Opts,
+}
+
+impl<F: Family> Core<F> {
+    fn open(ty: Type) -> std::io::Result<Self> {
         Ok(Self {
-            inner,
+            inner: Socket::new(F::DOMAIN, ty, Some(F::PROTOCOL))?,
             bound_to: None,
             buf: vec![0; DEFAULT_RECV_BUFFER_SIZE],
             opts: Opts {
@@ -90,31 +167,22 @@ impl Icmp4Core {
         })
     }
 
-    fn bind(&mut self, addr: Ipv4Addr) -> std::io::Result<()> {
+    fn bind(&mut self, addr: F::Addr) -> std::io::Result<()> {
         self.bound_to = Some(addr);
-        let sock = ip_to_socket(&IpAddr::V4(addr));
-        self.inner.bind(&(sock.into()))
+        self.inner.bind(&to_sockaddr(addr))
     }
 
     fn set_read_buffer_size(&mut self, size: usize) {
         self.buf.resize(size, 0);
     }
 
-    /// The bound local port. On a datagram (ping) socket this is the ICMP
-    /// identifier the kernel associates with the socket.
-    fn local_identifier(&self) -> std::io::Result<u16> {
-        let addr = self.inner.local_addr()?;
-        Ok(addr.as_socket_ipv4().map(|s| s.port()).unwrap_or(0))
-    }
-
-    fn send_bytes(&self, dest: Ipv4Addr, bytes: &[u8]) -> std::io::Result<()> {
-        self.inner.set_ttl(self.opts.hops)?;
-        let dest = ip_to_socket(&IpAddr::V4(dest));
-        self.inner.send_to(bytes, &(dest.into()))?;
+    fn send_bytes(&self, dest: F::Addr, bytes: &[u8]) -> std::io::Result<()> {
+        F::set_hops(&self.inner, self.opts.hops)?;
+        self.inner.send_to(bytes, &to_sockaddr(dest))?;
         Ok(())
     }
 
-    fn recv(&mut self) -> std::io::Result<(Icmpv4Packet, SockAddr)> {
+    fn recv(&mut self) -> std::io::Result<(F::Packet, SockAddr)> {
         self.inner.set_read_timeout(self.opts.timeout)?;
         // NOTE(jwall): the `recv_from` implementation promises not to write uninitialised
         // bytes to the `buf`fer, so this casting is safe.
@@ -122,15 +190,7 @@ impl Icmp4Core {
         let mut buf =
             unsafe { &mut *(self.buf.as_mut_slice() as *mut [u8] as *mut [MaybeUninit<u8>]) };
         let (read_count, addr) = self.inner.recv_from(&mut buf)?;
-        // A full buffer means the packet may have been truncated on read. Report
-        // it rather than silently returning a partial packet.
-        if read_count == self.buf.len() {
-            return Err(truncated_error());
-        }
-        // Whether an IPv4 header is present depends on the OS and socket type,
-        // so detect it from the bytes rather than assuming.
-        let packet = Icmpv4Packet::parse_auto(&self.buf[0..read_count])?;
-        Ok((packet, addr))
+        Ok((decode_received::<F>(&self.buf, read_count)?, addr))
     }
 }
 
@@ -147,16 +207,15 @@ pub(crate) fn truncated_error() -> std::io::Error {
 /// A raw (SOCK_RAW) ICMPv4 socket. Requires elevated privileges. The caller
 /// constructs and owns the full packet, including its identifier.
 pub struct IcmpSocket4 {
-    core: Icmp4Core,
+    core: Core<V4>,
 }
 
 impl IcmpSocket4 {
     /// Construct a new raw socket. The socket must be bound to an address using `bind`
     /// before it can be used to send and receive packets.
     pub fn new() -> std::io::Result<Self> {
-        let socket = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))?;
         Ok(Self {
-            core: Icmp4Core::from_socket(socket)?,
+            core: Core::open(Type::RAW)?,
         })
     }
 
@@ -174,7 +233,7 @@ impl IcmpSocket4 {
 
     #[cfg(feature = "smol")]
     pub fn into_async(self) -> std::io::Result<crate::smol::AsyncIcmpV4Socket> {
-        let Icmp4Core {
+        let Core {
             inner,
             bound_to,
             buf,
@@ -220,7 +279,7 @@ impl IcmpSocket for IcmpSocket4 {
 /// and reported by [`Self::identifier`] — and its [`Self::send`] takes only the
 /// sequence and payload. Match replies against [`Self::identifier`].
 pub struct DgramIcmpSocket4 {
-    core: Icmp4Core,
+    core: Core<V4>,
     identifier: u16,
 }
 
@@ -228,9 +287,8 @@ impl DgramIcmpSocket4 {
     /// Construct a new datagram socket. It must be bound with [`Self::bind`]
     /// before sending so that its identifier is established.
     pub fn new() -> std::io::Result<Self> {
-        let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::ICMPV4))?;
         Ok(Self {
-            core: Icmp4Core::from_socket(socket)?,
+            core: Core::open(Type::DGRAM)?,
             identifier: 0,
         })
     }
@@ -239,7 +297,7 @@ impl DgramIcmpSocket4 {
     /// port.
     pub fn bind<A: Into<Ipv4Addr>>(&mut self, addr: A) -> std::io::Result<()> {
         self.core.bind(addr.into())?;
-        self.identifier = self.core.local_identifier()?;
+        self.identifier = local_port(&self.core.inner)?;
         Ok(())
     }
 
@@ -291,7 +349,7 @@ impl DgramIcmpSocket4 {
 
     #[cfg(feature = "smol")]
     pub fn into_async(self) -> std::io::Result<crate::smol::AsyncDgramIcmpV4Socket> {
-        let Icmp4Core {
+        let Core {
             inner,
             bound_to,
             buf,
@@ -303,29 +361,15 @@ impl DgramIcmpSocket4 {
 
 /// An Icmpv6 socket.
 pub struct IcmpSocket6 {
-    bound_to: Option<Ipv6Addr>,
-    inner: Socket,
-    buf: Vec<u8>,
-    opts: Opts,
+    core: Core<V6>,
 }
 
 impl IcmpSocket6 {
     /// Construct a new raw socket. The socket must be bound to an address using `bind_to`
     /// before it can be used to send and receive packets.
     pub fn new() -> std::io::Result<Self> {
-        let socket = Socket::new(Domain::IPV6, Type::RAW, Some(Protocol::ICMPV6))?;
-        Self::new_from_socket(socket)
-    }
-
-    fn new_from_socket(socket: Socket) -> std::io::Result<Self> {
         Ok(Self {
-            bound_to: None,
-            inner: socket,
-            buf: vec![0; DEFAULT_RECV_BUFFER_SIZE],
-            opts: Opts {
-                hops: 50,
-                timeout: None,
-            },
+            core: Core::open(Type::RAW)?,
         })
     }
 
@@ -333,7 +377,7 @@ impl IcmpSocket6 {
     /// packet larger than this is truncated on read, and `rcv_from` reports a
     /// possible truncation rather than returning a partial packet.
     pub fn set_read_buffer_size(&mut self, size: usize) {
-        self.buf.resize(size, 0);
+        self.core.set_read_buffer_size(size);
     }
 }
 
@@ -342,15 +386,11 @@ impl IcmpSocket for IcmpSocket6 {
     type PacketType = Icmpv6Packet;
 
     fn set_max_hops(&mut self, hops: u32) {
-        self.opts.hops = hops;
+        self.core.opts.hops = hops;
     }
 
     fn bind<A: Into<Self::AddrType>>(&mut self, addr: A) -> std::io::Result<()> {
-        let addr = addr.into();
-        self.bound_to = Some(addr.clone());
-        let sock = ip_to_socket(&IpAddr::V6(addr));
-        self.inner.bind(&(sock.into()))?;
-        Ok(())
+        self.core.bind(addr.into())
     }
 
     fn send_to(
@@ -358,7 +398,7 @@ impl IcmpSocket for IcmpSocket6 {
         dest: Self::AddrType,
         mut packet: Self::PacketType,
     ) -> std::io::Result<()> {
-        let source = match self.bound_to {
+        let source = match self.core.bound_to {
             Some(ref addr) => addr,
             None => {
                 return Err(std::io::Error::new(
@@ -368,30 +408,15 @@ impl IcmpSocket for IcmpSocket6 {
             }
         };
         packet = packet.with_checksum(source, &dest);
-        let dest = ip_to_socket(&IpAddr::V6(dest));
-        self.inner.set_unicast_hops_v6(self.opts.hops)?;
-        let pkt = packet.get_bytes(true);
-        self.inner.send_to(&pkt, &(dest.into()))?;
-        Ok(())
+        self.core.send_bytes(dest, &packet.get_bytes(true))
     }
 
     fn rcv_from(&mut self) -> std::io::Result<(Self::PacketType, SockAddr)> {
-        self.inner.set_read_timeout(self.opts.timeout)?;
-        // NOTE(jwall): the `recv_from` implementation promises not to write uninitialised
-        // bytes to the `buf`fer, so this casting is safe.
-        // TODO(jwall): change to `Vec::spare_capacity_mut` when it stabilizes.
-        let mut buf =
-            unsafe { &mut *(self.buf.as_mut_slice() as *mut [u8] as *mut [MaybeUninit<u8>]) };
-        let (read_count, addr) = self.inner.recv_from(&mut buf)?;
-        // A full buffer means the packet may have been truncated on read.
-        if read_count == self.buf.len() {
-            return Err(truncated_error());
-        }
-        Ok((self.buf[0..read_count].try_into()?, addr))
+        self.core.recv()
     }
 
     fn set_timeout(&mut self, timeout: Option<Duration>) {
-        self.opts.timeout = timeout;
+        self.core.opts.timeout = timeout;
     }
 }
 

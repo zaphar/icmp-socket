@@ -32,7 +32,7 @@ use crate::{
 };
 
 /// Shared low-level state and operations for the async ICMPv4 sockets, mirroring
-/// the blocking `Icmp4Core` but driven through the smol reactor.
+/// the blocking `Core` but driven through the smol reactor.
 struct AsyncIcmp4Core {
     inner: Async<Socket>,
     bound_to: Option<Ipv4Addr>,
