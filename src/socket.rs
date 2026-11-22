@@ -18,7 +18,6 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::{
     convert::{Into, TryFrom},
-    mem::MaybeUninit,
     time::Duration,
 };
 
@@ -131,17 +130,32 @@ pub(crate) fn local_port(sock: &Socket) -> std::io::Result<u16> {
     Ok(addr.as_socket().map(|s| s.port()).unwrap_or(0))
 }
 
-/// Decode the first `read_count` bytes of a receive buffer, reporting a
-/// possible truncation instead of a partial packet.
+/// Receive one message into `buf`, which holds at most `size` bytes. On
+/// return `buf` holds exactly the bytes received.
+pub(crate) fn recv_into(
+    sock: &Socket,
+    buf: &mut Vec<u8>,
+    size: usize,
+) -> std::io::Result<(usize, SockAddr)> {
+    buf.clear();
+    buf.reserve(size);
+    let (read_count, addr) = sock.recv_from(&mut buf.spare_capacity_mut()[..size])?;
+    // SAFETY: `recv_from` initialized the first `read_count` bytes.
+    unsafe { buf.set_len(read_count) };
+    Ok((read_count, addr))
+}
+
+/// Decode a received message, reporting a possible truncation instead of a
+/// partial packet.
 pub(crate) fn decode_received<F: Family>(
-    buf: &[u8],
-    read_count: usize,
+    received: &[u8],
+    buf_size: usize,
 ) -> std::io::Result<F::Packet> {
     // A full buffer means the packet may have been truncated on read.
-    if read_count == buf.len() {
+    if received.len() == buf_size {
         return Err(truncated_error());
     }
-    Ok(F::decode(&buf[..read_count])?)
+    Ok(F::decode(received)?)
 }
 
 /// Shared low-level state and operations for the blocking sockets. This keeps
@@ -150,7 +164,10 @@ pub(crate) fn decode_received<F: Family>(
 pub(crate) struct Core<F: Family> {
     pub(crate) inner: Socket,
     pub(crate) bound_to: Option<F::Addr>,
+    /// The receive buffer. Its length is the size of the last message.
     pub(crate) buf: Vec<u8>,
+    /// The largest message one read accepts.
+    pub(crate) buf_size: usize,
     pub(crate) opts: Opts,
 }
 
@@ -159,7 +176,8 @@ impl<F: Family> Core<F> {
         Ok(Self {
             inner: Socket::new(F::DOMAIN, ty, Some(F::PROTOCOL))?,
             bound_to: None,
-            buf: vec![0; DEFAULT_RECV_BUFFER_SIZE],
+            buf: Vec::with_capacity(DEFAULT_RECV_BUFFER_SIZE),
+            buf_size: DEFAULT_RECV_BUFFER_SIZE,
             opts: Opts {
                 hops: 50,
                 timeout: None,
@@ -173,7 +191,7 @@ impl<F: Family> Core<F> {
     }
 
     fn set_read_buffer_size(&mut self, size: usize) {
-        self.buf.resize(size, 0);
+        self.buf_size = size;
     }
 
     fn send_bytes(&self, dest: F::Addr, bytes: &[u8]) -> std::io::Result<()> {
@@ -184,13 +202,8 @@ impl<F: Family> Core<F> {
 
     fn recv(&mut self) -> std::io::Result<(F::Packet, SockAddr)> {
         self.inner.set_read_timeout(self.opts.timeout)?;
-        // NOTE(jwall): the `recv_from` implementation promises not to write uninitialised
-        // bytes to the `buf`fer, so this casting is safe.
-        // TODO(jwall): change to `Vec::spare_capacity_mut` when it stabilizes.
-        let mut buf =
-            unsafe { &mut *(self.buf.as_mut_slice() as *mut [u8] as *mut [MaybeUninit<u8>]) };
-        let (read_count, addr) = self.inner.recv_from(&mut buf)?;
-        Ok((decode_received::<F>(&self.buf, read_count)?, addr))
+        let (_, addr) = recv_into(&self.inner, &mut self.buf, self.buf_size)?;
+        Ok((decode_received::<F>(&self.buf, self.buf_size)?, addr))
     }
 }
 
@@ -233,13 +246,7 @@ impl IcmpSocket4 {
 
     #[cfg(feature = "smol")]
     pub fn into_async(self) -> std::io::Result<crate::smol::AsyncIcmpV4Socket> {
-        let Core {
-            inner,
-            bound_to,
-            buf,
-            opts,
-        } = self.core;
-        crate::smol::AsyncIcmpV4Socket::new(inner, bound_to, buf, opts)
+        crate::smol::AsyncIcmpV4Socket::new(self.core)
     }
 }
 
@@ -349,13 +356,7 @@ impl DgramIcmpSocket4 {
 
     #[cfg(feature = "smol")]
     pub fn into_async(self) -> std::io::Result<crate::smol::AsyncDgramIcmpV4Socket> {
-        let Core {
-            inner,
-            bound_to,
-            buf,
-            opts,
-        } = self.core;
-        crate::smol::AsyncDgramIcmpV4Socket::new(inner, bound_to, buf, opts, self.identifier)
+        crate::smol::AsyncDgramIcmpV4Socket::new(self.core, self.identifier)
     }
 }
 

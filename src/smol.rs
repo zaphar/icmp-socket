@@ -16,7 +16,7 @@
 //! This module is gated behind the `smol` feature. Obtain an async socket by
 //! constructing a [`crate::IcmpSocket4`] or [`crate::DgramIcmpSocket4`] and
 //! calling `into_async`.
-use std::{mem::MaybeUninit, net::Ipv4Addr, time::Duration};
+use std::{net::Ipv4Addr, time::Duration};
 
 use async_trait::async_trait;
 use smol::{future::FutureExt, Async, Timer};
@@ -24,7 +24,7 @@ use socket2::{SockAddr, Socket};
 
 use crate::{
     packet::{Icmpv4Packet, WithEchoRequest},
-    socket::{decode_received, local_port, to_sockaddr, Family, Opts, V4},
+    socket::{decode_received, local_port, recv_into, to_sockaddr, Core, Family, Opts, V4},
 };
 
 /// Shared low-level state and operations for the async sockets, mirroring
@@ -33,21 +33,18 @@ struct AsyncCore<F: Family> {
     inner: Async<Socket>,
     bound_to: Option<F::Addr>,
     buf: Vec<u8>,
+    buf_size: usize,
     opts: Opts,
 }
 
 impl<F: Family> AsyncCore<F> {
-    fn new(
-        inner: Socket,
-        bound_to: Option<F::Addr>,
-        buf: Vec<u8>,
-        opts: Opts,
-    ) -> std::io::Result<Self> {
+    fn new(core: Core<F>) -> std::io::Result<Self> {
         Ok(Self {
-            inner: Async::new(inner)?,
-            bound_to,
-            buf,
-            opts,
+            inner: Async::new(core.inner)?,
+            bound_to: core.bound_to,
+            buf: core.buf,
+            buf_size: core.buf_size,
+            opts: core.opts,
         })
     }
 
@@ -59,7 +56,7 @@ impl<F: Family> AsyncCore<F> {
     }
 
     fn set_read_buffer_size(&mut self, size: usize) {
-        self.buf.resize(size, 0);
+        self.buf_size = size;
     }
 
     async fn send_bytes(&self, dest: F::Addr, bytes: &[u8]) -> std::io::Result<()> {
@@ -75,14 +72,9 @@ impl<F: Family> AsyncCore<F> {
         let timeout = self.opts.timeout;
         let inner = &self.inner;
         let buf = &mut self.buf;
-        // NOTE(jwall): the `recv_from` implementation promises not to write
-        // uninitialised bytes to the buffer, so this cast is safe.
-        let recv = async {
-            let uninit =
-                unsafe { &mut *(buf.as_mut_slice() as *mut [u8] as *mut [MaybeUninit<u8>]) };
-            inner.read_with(|sock| sock.recv_from(uninit)).await
-        };
-        let (read_count, addr) = match timeout {
+        let buf_size = self.buf_size;
+        let recv = inner.read_with(|sock| recv_into(sock, buf, buf_size));
+        let (_, addr) = match timeout {
             Some(t) => {
                 recv.or(async move {
                     Timer::after(t).await;
@@ -95,7 +87,7 @@ impl<F: Family> AsyncCore<F> {
             }
             None => recv.await?,
         };
-        Ok((decode_received::<F>(&self.buf, read_count)?, addr))
+        Ok((decode_received::<F>(&self.buf, self.buf_size)?, addr))
     }
 }
 
@@ -105,16 +97,11 @@ pub struct AsyncIcmpV4Socket {
 }
 
 impl AsyncIcmpV4Socket {
-    /// Wrap a blocking [`Socket`] in the smol reactor. Construct one via
+    /// Wrap a blocking socket in the smol reactor. Construct one via
     /// [`crate::IcmpSocket4::into_async`].
-    pub(crate) fn new(
-        inner: Socket,
-        bound_to: Option<Ipv4Addr>,
-        buf: Vec<u8>,
-        opts: Opts,
-    ) -> std::io::Result<Self> {
+    pub(crate) fn new(core: Core<V4>) -> std::io::Result<Self> {
         Ok(Self {
-            core: AsyncCore::new(inner, bound_to, buf, opts)?,
+            core: AsyncCore::new(core)?,
         })
     }
 
@@ -203,15 +190,9 @@ pub struct AsyncDgramIcmpV4Socket {
 
 impl AsyncDgramIcmpV4Socket {
     /// Construct one via [`crate::DgramIcmpSocket4::into_async`].
-    pub(crate) fn new(
-        inner: Socket,
-        bound_to: Option<Ipv4Addr>,
-        buf: Vec<u8>,
-        opts: Opts,
-        identifier: u16,
-    ) -> std::io::Result<Self> {
+    pub(crate) fn new(core: Core<V4>, identifier: u16) -> std::io::Result<Self> {
         Ok(Self {
-            core: AsyncCore::new(inner, bound_to, buf, opts)?,
+            core: AsyncCore::new(core)?,
             identifier,
         })
     }
