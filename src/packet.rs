@@ -773,6 +773,11 @@ impl Icmpv4Packet {
                 padding: BigEndian::read_u32(&bytes[4..8]),
                 header: bytes[8..].to_owned(),
             },
+            12 => Icmpv4Message::ParameterProblem {
+                pointer: bytes[4],
+                padding: (bytes[5], BigEndian::read_u16(&bytes[6..8])),
+                header: bytes[8..].to_owned(),
+            },
             4 => Icmpv4Message::Quench {
                 padding: BigEndian::read_u32(&bytes[4..8]),
                 header: bytes[8..].to_owned(),
@@ -1317,6 +1322,27 @@ mod tests {
             let pkt = Icmpv4Packet::parse_dgram(&raw).unwrap();
             assert_eq!(pkt.get_bytes(true), raw, "type {}", typ);
             pkt.with_checksum().verify_checksum();
+        }
+    }
+
+    #[test]
+    fn icmpv4_parameter_problem_round_trip() {
+        let pkt = Icmpv4Packet::with_parameter_problem(0, 9, vec![0x45, 0, 0, 20])
+            .unwrap()
+            .with_checksum();
+        let bytes = pkt.get_bytes(true);
+        let parsed = Icmpv4Packet::parse_dgram(&bytes).unwrap();
+        assert_eq!(parsed.typ, 12);
+        assert_eq!(parsed.get_bytes(true), bytes);
+        assert!(parsed.verify_checksum());
+        match parsed.message {
+            Icmpv4Message::ParameterProblem {
+                pointer, header, ..
+            } => {
+                assert_eq!(pointer, 9);
+                assert_eq!(header, vec![0x45, 0, 0, 20]);
+            }
+            m => panic!("expected ParameterProblem, got {:?}", m),
         }
     }
 }
