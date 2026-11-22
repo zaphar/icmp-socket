@@ -49,30 +49,46 @@ use std::convert::TryFrom;
 use byteorder::{BigEndian, ByteOrder};
 use std::net::Ipv6Addr;
 
-fn ipv6_sum_words(ip: &Ipv6Addr) -> u32 {
-    ip.segments().iter().map(|x| *x as u32).sum()
+fn ipv6_sum_words(ip: &Ipv6Addr) -> u64 {
+    ip.segments().iter().map(|x| *x as u64).sum()
 }
 
-fn sum_big_endian_words(bs: &[u8]) -> u32 {
+// The sum is a u64 so that no input slice a caller can pass overflows it.
+fn sum_big_endian_words(bs: &[u8]) -> u64 {
     if bs.len() == 0 {
         return 0;
     }
 
     let len = bs.len();
     let mut data = &bs[..];
-    let mut sum = 0u32;
+    let mut sum = 0u64;
     // Iterate by word which is two bytes.
     while data.len() >= 2 {
-        sum += BigEndian::read_u16(&data[0..2]) as u32;
+        sum += BigEndian::read_u16(&data[0..2]) as u64;
         // remove the first two bytes now that we've already summed them
         data = &data[2..];
     }
 
     if (len % 2) != 0 {
         // If odd then checksum the last byte
-        sum += (data[0] as u32) << 8;
+        sum += (data[0] as u64) << 8;
     }
     return sum;
+}
+
+/// Fold the carries of a one's complement sum into 16 bits.
+fn fold_carries(mut sum: u64) -> u16 {
+    while sum >> 16 != 0 {
+        sum = (sum >> 16) + (sum & 0xFFFF);
+    }
+    sum as u16
+}
+
+/// The ICMPv6 pseudo-header sum (RFC 4443 section 2.3) for a message of
+/// `len` bytes.
+fn ipv6_pseudo_header_sum(source: &Ipv6Addr, dest: &Ipv6Addr, len: usize) -> u64 {
+    // 58 is the IPv6 next header value for ICMPv6.
+    ipv6_sum_words(source) + ipv6_sum_words(dest) + len as u64 + 58
 }
 
 /// Construct a packet for the EchoRequest messages.
@@ -305,26 +321,11 @@ impl Icmpv6Packet {
     /// Calculate the checksum for the packet given the provided source and destination
     /// addresses.
     pub fn calculate_checksum(&self, source: &Ipv6Addr, dest: &Ipv6Addr) -> u16 {
-        // First sum the pseudo header
-        let mut sum = 0u32;
-        sum += ipv6_sum_words(source);
-        sum += ipv6_sum_words(dest);
-        // according to rfc4443: https://tools.ietf.org/html/rfc4443#section-2.3
-        // the ip next header value is 58
-        sum += 58;
-
-        // Then sum the len of the message bytes and then the message bytes starting
-        // with the message type field and with the checksum field set to 0.
+        // Sum the pseudo header, then the message bytes starting with the
+        // type field and with the checksum field set to 0.
         let bytes = self.get_bytes(false);
-        let len = bytes.len();
-        sum += len as u32;
-        sum += sum_big_endian_words(&bytes);
-
-        // handle the carry
-        while sum >> 16 != 0 {
-            sum = (sum >> 16) + (sum & 0xFFFF);
-        }
-        !sum as u16
+        let sum = ipv6_pseudo_header_sum(source, dest, bytes.len()) + sum_big_endian_words(&bytes);
+        !fold_carries(sum)
     }
 
     /// Fill the checksum for the packet using the given source and destination
@@ -338,8 +339,22 @@ impl Icmpv6Packet {
     /// addresses. An ICMPv6 checksum covers the IPv6 pseudo-header, so both
     /// addresses are required: `dest` is the address the packet was received on
     /// and `source` is the address it came from.
+    ///
+    /// This serializes the parsed packet again, so it is only as exact as the
+    /// parser. To verify bytes exactly as received, use
+    /// [`Self::verify_checksum_bytes`].
     pub fn verify_checksum(&self, source: &Ipv6Addr, dest: &Ipv6Addr) -> bool {
         self.calculate_checksum(source, dest) == self.checksum
+    }
+
+    /// Verify the checksum of an ICMPv6 message as received. `bytes` begins at
+    /// the ICMPv6 type byte. `source` and `dest` are the IPv6 addresses of the
+    /// pseudo-header, as for [`Self::verify_checksum`].
+    pub fn verify_checksum_bytes(bytes: &[u8], source: &Ipv6Addr, dest: &Ipv6Addr) -> bool {
+        bytes.len() >= 4
+            && fold_carries(
+                ipv6_pseudo_header_sum(source, dest, bytes.len()) + sum_big_endian_words(bytes),
+            ) == 0xFFFF
     }
 
     /// Construct a packet for Packet Too Big messages.
@@ -862,19 +877,10 @@ impl Icmpv4Packet {
     /// Calculate the checksum for the packet given the provided source and destination
     /// addresses.
     pub fn calculate_checksum(&self) -> u16 {
-        // First sum the pseudo header
-        let mut sum = 0u32;
-
-        // Then sum the len of the message bytes and then the message bytes starting
-        // with the message type field and with the checksum field set to 0.
+        // Sum the message bytes starting with the type field and with the
+        // checksum field set to 0.
         let bytes = self.get_bytes(false);
-        sum += sum_big_endian_words(&bytes);
-
-        // handle the carry
-        while sum >> 16 != 0 {
-            sum = (sum >> 16) + (sum & 0xFFFF);
-        }
-        !sum as u16
+        !fold_carries(sum_big_endian_words(&bytes))
     }
 
     /// Populate the checksum field of this Packet.
@@ -886,8 +892,19 @@ impl Icmpv4Packet {
     /// Verify the packet's checksum. Returns true when the stored checksum
     /// matches the one computed over the message. An ICMPv4 checksum covers only
     /// the ICMP message, so no addresses are needed.
+    ///
+    /// This serializes the parsed packet again, so it is only as exact as the
+    /// parser: the Timestamp and Information messages keep no bytes after
+    /// their fixed fields, so a received message with extra bytes fails. To
+    /// verify bytes exactly as received, use [`Self::verify_checksum_bytes`].
     pub fn verify_checksum(&self) -> bool {
         self.calculate_checksum() == self.checksum
+    }
+
+    /// Verify the checksum of an ICMPv4 message as received. `bytes` begins at
+    /// the ICMP type byte, with no IPv4 header.
+    pub fn verify_checksum_bytes(bytes: &[u8]) -> bool {
+        bytes.len() >= 4 && fold_carries(sum_big_endian_words(bytes)) == 0xFFFF
     }
 }
 
@@ -1414,5 +1431,36 @@ mod tests {
                 .and_then(|e| e.downcast_ref::<IcmpPacketBuildError>()),
             Some(&IcmpPacketBuildError::InvalidCode(7))
         );
+    }
+
+    #[test]
+    fn icmpv4_verify_checksum_bytes() {
+        let pkt = Icmpv4Packet::with_echo_request(42, 1, vec![1, 2, 3, 4, 5])
+            .unwrap()
+            .with_checksum();
+        let mut bytes = pkt.get_bytes(true);
+        assert!(Icmpv4Packet::verify_checksum_bytes(&bytes));
+        bytes[8] ^= 0x01;
+        assert!(!Icmpv4Packet::verify_checksum_bytes(&bytes));
+
+        // An Information message with trailing bytes verifies from the raw
+        // bytes, although the parsed packet keeps no trailing bytes.
+        let mut raw = vec![15, 0, 0, 0, 0, 1, 0, 2, 0xAA, 0xBB];
+        let cksum = !fold_carries(sum_big_endian_words(&raw));
+        raw[2..4].copy_from_slice(&cksum.to_be_bytes());
+        assert!(Icmpv4Packet::verify_checksum_bytes(&raw));
+        assert!(!Icmpv4Packet::parse_dgram(&raw).unwrap().verify_checksum());
+    }
+
+    #[test]
+    fn icmpv6_verify_checksum_bytes() {
+        let lo = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1);
+        let other = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
+        let pkt = Icmpv6Packet::with_echo_request(42, 1, vec![1, 2, 3, 4, 5])
+            .unwrap()
+            .with_checksum(&lo, &lo);
+        let bytes = pkt.get_bytes(true);
+        assert!(Icmpv6Packet::verify_checksum_bytes(&bytes, &lo, &lo));
+        assert!(!Icmpv6Packet::verify_checksum_bytes(&bytes, &other, &lo));
     }
 }
