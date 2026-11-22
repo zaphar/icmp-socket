@@ -234,7 +234,7 @@ impl Icmpv6Message {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Icmpv6Packet {
     // NOTE(JWALL): All of the below integers should be parsed as big endian on the
     // wire.
@@ -542,7 +542,7 @@ impl From<PacketParseError> for std::io::Error {
 }
 
 /// The various messages for an Icmpv4 packet.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Icmpv4Message {
     Unreachable {
         // type 3
@@ -712,7 +712,7 @@ impl Icmpv4Message {
 }
 
 /// An Icmpv4 Packet.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Icmpv4Packet {
     pub typ: u8,
     pub code: u8,

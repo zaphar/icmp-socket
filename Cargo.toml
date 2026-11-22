@@ -24,6 +24,9 @@ optional = true
 version = "0.1.74"
 optional = true
 
+[dev-dependencies]
+proptest = "1"
+
 [features]
 default = []
 smol = ["dep:smol", "dep:async-trait"]
