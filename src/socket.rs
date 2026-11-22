@@ -92,7 +92,7 @@ impl Family for V4 {
     type Packet = Icmpv4Packet;
 
     fn set_hops(sock: &Socket, hops: u32) -> std::io::Result<()> {
-        sock.set_ttl(hops)
+        sock.set_ttl_v4(hops)
     }
 
     fn decode(bytes: &[u8]) -> Result<Icmpv4Packet, PacketParseError> {
