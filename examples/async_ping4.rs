@@ -75,11 +75,17 @@ fn main() -> std::io::Result<()> {
                             continue;
                         }
                         if let Icmpv4Message::EchoReply {
+                            identifier,
                             sequence: seq,
                             payload,
-                            ..
                         } = resp.message
                         {
+                            // Other sockets' replies can arrive here too, e.g.
+                            // on macOS, where every datagram ICMP socket
+                            // receives every reply.
+                            if identifier != socket.identifier() || seq != sequence {
+                                continue;
+                            }
                             let elapsed = Instant::now() - send_time;
                             println!(
                                 "Ping {} seq={} time={}ms size={}",

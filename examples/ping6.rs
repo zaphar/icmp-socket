@@ -20,20 +20,32 @@ use icmp_socket::packet::WithEchoRequest;
 use icmp_socket::socket::IcmpSocket;
 use icmp_socket::*;
 
+/// The identifier in our echo requests. A real tool would use a value unique
+/// to the process, e.g. its process ID.
+const IDENTIFIER: u16 = 42;
+
 pub fn main() {
     let address = std::env::args().nth(1).unwrap_or("::1".to_owned());
     let parsed_addr = address.parse::<Ipv6Addr>().unwrap();
-    let packet_handler = |pkt: Icmpv6Packet, send_time: Instant, addr: Ipv6Addr| -> Option<()> {
+    // A raw socket receives ICMP packets for every process on this host, so
+    // match a reply on its source, identifier and sequence.
+    let packet_handler = |pkt: Icmpv6Packet,
+                          send_time: Instant,
+                          addr: Ipv6Addr,
+                          expected_sequence: u16|
+     -> Option<()> {
         let now = Instant::now();
         let elapsed = now - send_time;
         if addr == parsed_addr {
-            // TODO
             if let Icmpv6Message::EchoReply {
-                identifier: _,
+                identifier: IDENTIFIER,
                 sequence,
                 payload,
             } = pkt.message
             {
+                if sequence != expected_sequence {
+                    return None;
+                }
                 println!(
                     "Ping {} seq={} time={}ms size={}",
                     addr,
@@ -53,12 +65,10 @@ pub fn main() {
     };
     let mut socket6 = IcmpSocket6::new().unwrap();
     socket6.bind("::0".parse::<Ipv6Addr>().unwrap()).unwrap();
-    // TODO(jwall): The first packet we recieve will be the one we sent.
-    // We need to implement packet filtering for the socket.
     let mut sequence = 0 as u16;
     loop {
         let packet = Icmpv6Packet::with_echo_request(
-            42,
+            IDENTIFIER,
             sequence,
             vec![
                 0x20, 0x20, 0x75, 0x73, 0x74, 0x20, 0x61, 0x20, 0x66, 0x6c, 0x65, 0x73, 0x68, 0x20,
@@ -81,7 +91,13 @@ pub fn main() {
                     break;
                 }
             };
-            if packet_handler(resp, send_time, *sock_addr.as_socket_ipv6().unwrap().ip()).is_some()
+            if packet_handler(
+                resp,
+                send_time,
+                *sock_addr.as_socket_ipv6().unwrap().ip(),
+                sequence,
+            )
+            .is_some()
             {
                 std::thread::sleep(Duration::from_millis(1000));
                 break;
