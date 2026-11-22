@@ -15,6 +15,7 @@
 //!
 //! The standard ping examples for both Ipv6 and IPv4 are in the examples
 //! directory.
+pub mod addr;
 mod checksum;
 pub mod error;
 pub mod icmpv4;
@@ -23,6 +24,7 @@ pub mod options;
 pub mod socket;
 mod wire;
 
+pub use addr::ScopedIpv6Addr;
 pub use error::{ModelledTypeError, ParseError};
 pub use icmpv4::{Icmpv4Message, Icmpv4Other};
 pub use icmpv6::{Icmpv6Message, Icmpv6Other};
