@@ -108,3 +108,30 @@ fn raw6_unbound_loopback_roundtrip() {
         }
     }
 }
+
+#[test]
+#[ignore]
+fn raw4_type_filter_passes_only_replies() {
+    let mut socket = raw4();
+    socket
+        .set_type_filter(&TypeFilter::block_all().pass(icmpv4::msg_type::ECHO_REPLY))
+        .unwrap();
+    let request = Icmpv4Message::echo_request(0xBEEF, 7, vec![0x20; 8]);
+    socket.send_to(LOCALHOST, &request).unwrap();
+    // Without the filter the first message on loopback is our own request.
+    let (msg, _) = socket.recv_from().unwrap();
+    assert_eq!(msg.typ(), icmpv4::msg_type::ECHO_REPLY, "{:?}", msg);
+}
+
+#[test]
+#[ignore]
+fn raw6_type_filter_passes_only_replies() {
+    let mut socket = raw6();
+    socket
+        .set_type_filter(&TypeFilter::block_all().pass(icmpv6::msg_type::ECHO_REPLY))
+        .unwrap();
+    let request = Icmpv6Message::echo_request(0xBEEF, 7, vec![0x20; 8]);
+    socket.send_to(LO6, &request).unwrap();
+    let (msg, _) = socket.recv_from().unwrap();
+    assert_eq!(msg.typ(), icmpv6::msg_type::ECHO_REPLY, "{:?}", msg);
+}

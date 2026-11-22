@@ -184,6 +184,33 @@ pub(crate) fn set_hop_limit_v6(fd: BorrowedFd<'_>, hops: libc::c_int) -> io::Res
     set_int(fd, libc::IPPROTO_IPV6, libc::IPV6_UNICAST_HOPS, hops)
 }
 
+/// The Linux raw-socket option `ICMP_FILTER` (linux/icmp.h): a 32-bit mask
+/// of ICMPv4 types 0..32 to block. Not in the libc crate.
+#[cfg(target_os = "linux")]
+pub(crate) fn set_icmp_filter_v4(fd: BorrowedFd<'_>, blocked: u32) -> io::Result<()> {
+    const SOL_RAW: libc::c_int = 255;
+    const ICMP_FILTER: libc::c_int = 1;
+    set_raw(fd, SOL_RAW, ICMP_FILTER, &blocked)
+}
+
+/// Set `ICMP6_FILTER` (RFC 3542). `blocked` has one bit per type, set to
+/// block. Not in the libc crate; the option number and the bit meaning
+/// differ: on Linux a set bit blocks, in the KAME stack (macOS) a set bit
+/// passes.
+pub(crate) fn set_icmp6_filter(fd: BorrowedFd<'_>, blocked: [u32; 8]) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        const ICMP6_FILTER: libc::c_int = 1;
+        set_raw(fd, libc::IPPROTO_ICMPV6, ICMP6_FILTER, &blocked)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        const ICMP6_FILTER: libc::c_int = 18;
+        let passed = blocked.map(|w| !w);
+        set_raw(fd, libc::IPPROTO_ICMPV6, ICMP6_FILTER, &passed)
+    }
+}
+
 /// Read one message into the spare capacity of `buf` (at most `max`
 /// bytes) with `recvmsg`. On return `buf` holds the bytes received.
 /// `error_queue` reads the Linux error queue instead (non-blocking).

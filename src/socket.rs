@@ -35,6 +35,7 @@ use socket2::{SockRef, Socket, Type};
 
 use crate::addr::ScopedIpv6Addr;
 use crate::error::{Ipv4RecvError, RecvError};
+use crate::filter::TypeFilter;
 use crate::machine::{Interest, Machine, Next};
 use crate::state::{Core, Family, Parsed, ParsedFrom, Payload, Raw, RecvInfo, SendOptions, V4, V6};
 use crate::sys;
@@ -160,6 +161,12 @@ macro_rules! socket_common {
                 self.state.set_max_message_size(size);
             }
 
+            /// Receive only messages whose type passes `filter`. See
+            /// [`TypeFilter`].
+            pub fn set_type_filter(&mut self, filter: &TypeFilter) -> io::Result<()> {
+                self.state.set_type_filter(self.fd.as_fd(), filter)
+            }
+
             /// Receive one message and the address it came from.
             pub fn recv_from(&mut self) -> Result<($msg, $addr), RecvError<$proto>> {
                 drive(self.fd.as_fd(), self.read_timeout, self.state.recv_from())
@@ -221,6 +228,16 @@ macro_rules! socket_common {
             /// See the socket's `set_max_message_size`.
             pub fn set_max_message_size(&mut self, size: usize) {
                 self.core.set_max_message_size(size);
+            }
+
+            /// See the socket's `set_type_filter`. `fd` is the socket's
+            /// descriptor.
+            pub fn set_type_filter(
+                &mut self,
+                fd: BorrowedFd<'_>,
+                filter: &TypeFilter,
+            ) -> io::Result<()> {
+                self.core.set_type_filter(fd, filter)
             }
 
             /// The machine for one `recv_from`.

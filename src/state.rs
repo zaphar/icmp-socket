@@ -23,6 +23,7 @@ use socket2::{Domain, Protocol, SockAddr, SockRef};
 
 use crate::addr::ScopedIpv6Addr;
 use crate::error::{Ipv4RecvError, ParseError, RecvError};
+use crate::filter::TypeFilter;
 use crate::machine::{Interest, Machine, Next, Progress};
 use crate::sys::{self, Peer, Received};
 use crate::{Icmpv4Message, Icmpv6Message};
@@ -107,6 +108,9 @@ pub(crate) trait Family: Sized + 'static {
     fn verify(icmp: &[u8], raw: bool) -> Result<(), Self::Proto>;
     /// Undo changes the kernel made to a received message.
     fn repair(_icmp: &mut [u8]) {}
+    /// Give the kernel as much of `filter` as it supports. Returns whether
+    /// the kernel covers all of it.
+    fn kernel_filter(fd: BorrowedFd<'_>, raw: bool, filter: &TypeFilter) -> io::Result<bool>;
     fn parse(icmp: &[u8]) -> Result<Self::Message, ParseError>;
     /// Serialize for a socket (ICMPv6: the kernel fills the checksum in).
     fn encode(msg: &Self::Message, out: &mut Vec<u8>);
@@ -203,6 +207,18 @@ impl Family for V4 {
         }
     }
 
+    /// Linux raw sockets have `ICMP_FILTER` for types 0 to 31.
+    fn kernel_filter(fd: BorrowedFd<'_>, raw: bool, filter: &TypeFilter) -> io::Result<bool> {
+        #[cfg(target_os = "linux")]
+        if raw {
+            let blocked = filter.blocked();
+            sys::set_icmp_filter_v4(fd, blocked[0])?;
+            return Ok(blocked[1..].iter().all(|w| *w == 0));
+        }
+        let _ = (fd, raw, filter);
+        Ok(false)
+    }
+
     fn parse(icmp: &[u8]) -> Result<Icmpv4Message, ParseError> {
         Icmpv4Message::parse(icmp)
     }
@@ -285,6 +301,15 @@ impl Family for V6 {
         Ok(())
     }
 
+    /// Raw ICMPv6 sockets have `ICMP6_FILTER` (RFC 3542) for every type.
+    fn kernel_filter(fd: BorrowedFd<'_>, raw: bool, filter: &TypeFilter) -> io::Result<bool> {
+        if raw {
+            sys::set_icmp6_filter(fd, filter.blocked())?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     fn parse(icmp: &[u8]) -> Result<Icmpv6Message, ParseError> {
         Icmpv6Message::parse(icmp)
     }
@@ -352,6 +377,8 @@ pub(crate) struct Core<F: Family> {
     pub(crate) max: usize,
     send_buf: Vec<u8>,
     default_hops: libc::c_int,
+    /// The type filter the socket checks itself, where the kernel cannot.
+    user_filter: Option<TypeFilter>,
     /// The hop limit last set on the socket; `None` is the system default.
     applied_hops: Option<u8>,
     family: PhantomData<F>,
@@ -369,6 +396,7 @@ impl<F: Family> Core<F> {
             max: DEFAULT_MAX_MESSAGE_SIZE,
             send_buf: Vec::new(),
             default_hops: F::default_hops(fd)?,
+            user_filter: None,
             applied_hops: None,
             family: PhantomData,
         })
@@ -376,6 +404,16 @@ impl<F: Family> Core<F> {
 
     pub(crate) fn set_max_message_size(&mut self, size: usize) {
         self.max = size;
+    }
+
+    pub(crate) fn set_type_filter(
+        &mut self,
+        fd: BorrowedFd<'_>,
+        filter: &TypeFilter,
+    ) -> io::Result<()> {
+        let covered = F::kernel_filter(fd, self.raw, filter)?;
+        self.user_filter = (!covered && filter.blocks_any()).then_some(*filter);
+        Ok(())
     }
 
     pub(crate) fn send<'a>(
@@ -593,6 +631,12 @@ impl<F: Family, M: RecvMode<F>> RecvMachine<'_, F, M> {
             return;
         }
         F::repair(&mut core.buf[start..]);
+        if let (Some(filter), Some(&typ)) = (&core.user_filter, core.buf.get(start)) {
+            if !filter.passes(typ) {
+                // Blocked: receive the next message.
+                return;
+            }
+        }
         if M::PARSE {
             if let Err(e) = F::verify(&core.buf[start..], core.raw) {
                 self.outcome = Some(Err(RecvError::Protocol(e)));

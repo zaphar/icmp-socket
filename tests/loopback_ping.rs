@@ -170,3 +170,26 @@ fn dgram_send_options_apply_to_one_send() {
     socket.send_echo(LOCALHOST, 8, &[0x20; 8]).unwrap();
     await_reply(&mut socket, 8);
 }
+
+#[test]
+#[ignore]
+fn dgram_type_filter_drops_blocked_types() {
+    let mut socket = socket();
+    socket
+        .set_type_filter(&TypeFilter::pass_all().block(icmpv4::msg_type::ECHO_REPLY))
+        .unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_millis(300)))
+        .unwrap();
+    socket.send_echo(LOCALHOST, 10, &[0x20; 8]).unwrap();
+    match socket.recv_from() {
+        Err(RecvError::Timeout) => {}
+        other => panic!("the reply should have been dropped, got {:?}", other),
+    }
+    socket.set_type_filter(&TypeFilter::pass_all()).unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    socket.send_echo(LOCALHOST, 11, &[0x20; 8]).unwrap();
+    await_reply(&mut socket, 11);
+}
