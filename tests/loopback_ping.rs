@@ -181,3 +181,31 @@ fn dgram_recv_timeout_is_timed_out() {
         .expect_err("expected a timeout with nothing sent");
     assert_eq!(err.kind(), std::io::ErrorKind::TimedOut, "got: {}", err);
 }
+
+#[test]
+#[ignore]
+fn dgram_identifier_after_send_without_bind() {
+    let localhost = Ipv4Addr::new(127, 0, 0, 1);
+    let mut socket = match DgramIcmpSocket4::new() {
+        Ok(s) => s,
+        Err(e) => panic!("could not open an ICMP datagram socket ({})", e),
+    };
+    socket.set_timeout(Some(Duration::from_secs(2)));
+    // No bind: on Linux the kernel binds the socket on this send and puts
+    // the new local port into the packet's identifier.
+    socket
+        .send(localhost, 4, vec![0x20; 16])
+        .expect("failed to send");
+    loop {
+        let (resp, _) = socket.rcv_from().expect("failed to receive a reply");
+        if let Icmpv4Message::EchoReply {
+            identifier,
+            sequence: 4,
+            ..
+        } = resp.message
+        {
+            assert_eq!(identifier, socket.identifier());
+            return;
+        }
+    }
+}

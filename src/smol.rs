@@ -186,19 +186,17 @@ impl AsyncIcmpSocket for AsyncIcmpV4Socket {
 
 /// An async datagram (SOCK_DGRAM) ICMPv4 "ping" socket driven by the smol
 /// reactor. Like the blocking [`crate::DgramIcmpSocket4`], it owns the
-/// identifier (derived from the bound local port) rather than taking it from
-/// the caller, so [`Self::send`] takes only the sequence and payload.
+/// identifier rather than taking it from the caller, so [`Self::send`] takes
+/// only the sequence and payload.
 pub struct AsyncDgramIcmpV4Socket {
     core: AsyncCore<V4>,
-    identifier: u16,
 }
 
 impl AsyncDgramIcmpV4Socket {
     /// Construct one via [`crate::DgramIcmpSocket4::into_async`].
-    pub(crate) fn new(core: Core<V4>, identifier: u16) -> std::io::Result<Self> {
+    pub(crate) fn new(core: Core<V4>) -> std::io::Result<Self> {
         Ok(Self {
             core: AsyncCore::new(core)?,
-            identifier,
         })
     }
 
@@ -215,11 +213,10 @@ impl AsyncDgramIcmpV4Socket {
     }
 
     /// The ICMP identifier this socket uses on the wire. Match replies against
-    /// it. Meaningful only after [`Self::bind`]. As with the blocking socket
-    /// this is the bound local port, which is `0` on macOS (no port is
-    /// assigned to a datagram ICMP socket there).
+    /// it. It is read from the socket on each call, as described for
+    /// [`crate::DgramIcmpSocket4::identifier`].
     pub fn identifier(&self) -> u16 {
-        self.identifier
+        local_port(self.core.inner.get_ref()).unwrap_or(0)
     }
 
     /// Sets the timeout on the socket for `rcv_from`. A value of None blocks.
@@ -235,12 +232,9 @@ impl AsyncDgramIcmpV4Socket {
         self.core.opts.hops = Some(hops);
     }
 
-    /// Bind the socket and establish its identifier from the assigned local
-    /// port.
+    /// Bind the socket to a local address.
     pub async fn bind<A: Into<Ipv4Addr>>(&mut self, addr: A) -> std::io::Result<()> {
-        self.core.bind(addr.into())?;
-        self.identifier = local_port(self.core.inner.get_ref())?;
-        Ok(())
+        self.core.bind(addr.into())
     }
 
     /// Send an echo request to `dest`. The identifier is supplied by the socket,
@@ -251,7 +245,7 @@ impl AsyncDgramIcmpV4Socket {
         sequence: u16,
         payload: Vec<u8>,
     ) -> std::io::Result<()> {
-        let packet = Icmpv4Packet::with_echo_request(self.identifier, sequence, payload)?;
+        let packet = Icmpv4Packet::with_echo_request(self.identifier(), sequence, payload)?;
         self.core
             .send_bytes(dest, &packet.with_checksum().get_bytes(true))
             .await

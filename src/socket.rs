@@ -348,30 +348,25 @@ impl IcmpSocket for IcmpSocket4 {
 ///
 /// Unlike the raw socket, the identifier is not the caller's to choose: on
 /// Linux the kernel overwrites the packet's identifier with the socket's local
-/// port. This type therefore owns the identifier — derived from the bound port
-/// and reported by [`Self::identifier`] — and its [`Self::send`] takes only the
-/// sequence and payload. Match replies against [`Self::identifier`].
+/// port. This type therefore owns the identifier, reported by
+/// [`Self::identifier`], and its [`Self::send`] takes only the sequence and
+/// payload. Match replies against [`Self::identifier`].
 pub struct DgramIcmpSocket4 {
     core: Core<V4>,
-    identifier: u16,
 }
 
 impl DgramIcmpSocket4 {
-    /// Construct a new datagram socket. It must be bound with [`Self::bind`]
-    /// before sending so that its identifier is established.
+    /// Construct a new datagram socket. The kernel binds it on the first send
+    /// if [`Self::bind`] was not called.
     pub fn new() -> std::io::Result<Self> {
         Ok(Self {
             core: Core::open(Type::DGRAM)?,
-            identifier: 0,
         })
     }
 
-    /// Bind the socket and establish its identifier from the assigned local
-    /// port.
+    /// Bind the socket to a local address.
     pub fn bind<A: Into<Ipv4Addr>>(&mut self, addr: A) -> std::io::Result<()> {
-        self.core.bind(addr.into())?;
-        self.identifier = local_port(&self.core.inner)?;
-        Ok(())
+        self.core.bind(addr.into())
     }
 
     /// The address this socket has been bound to, if any.
@@ -387,13 +382,14 @@ impl DgramIcmpSocket4 {
     }
 
     /// The ICMP identifier this socket uses on the wire. Use it to match replies
-    /// that belong to this socket. Meaningful only after [`Self::bind`].
+    /// that belong to this socket.
     ///
-    /// This is the bound local port. On Linux that is a unique kernel-assigned
-    /// value; on macOS a datagram ICMP socket is not assigned a port, so this
-    /// is `0` and is not unique across sockets.
+    /// This is the socket's local port, read from the socket on each call. On
+    /// Linux the kernel assigns a unique port at [`Self::bind`] or at the first
+    /// send, and the value is `0` before that. On macOS a datagram ICMP socket
+    /// is not assigned a port, so this is `0` and is not unique across sockets.
     pub fn identifier(&self) -> u16 {
-        self.identifier
+        local_port(&self.core.inner).unwrap_or(0)
     }
 
     /// Sets the ttl for packets sent on this socket. Until it is called, the
@@ -412,7 +408,7 @@ impl DgramIcmpSocket4 {
     /// Send an echo request to `dest`. The identifier is supplied by the socket,
     /// so the caller provides only the sequence number and payload.
     pub fn send(&mut self, dest: Ipv4Addr, sequence: u16, payload: Vec<u8>) -> std::io::Result<()> {
-        let packet = Icmpv4Packet::with_echo_request(self.identifier, sequence, payload)?;
+        let packet = Icmpv4Packet::with_echo_request(self.identifier(), sequence, payload)?;
         self.core
             .send_bytes(dest, &packet.with_checksum().get_bytes(true))
     }
@@ -425,7 +421,7 @@ impl DgramIcmpSocket4 {
 
     #[cfg(feature = "smol")]
     pub fn into_async(self) -> std::io::Result<crate::smol::AsyncDgramIcmpV4Socket> {
-        crate::smol::AsyncDgramIcmpV4Socket::new(self.core, self.identifier)
+        crate::smol::AsyncDgramIcmpV4Socket::new(self.core)
     }
 }
 
