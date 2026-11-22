@@ -340,6 +340,10 @@ impl Icmpv6Packet {
     /// addresses are required: `dest` is the address the packet was received on
     /// and `source` is the address it came from.
     ///
+    /// The kernel already verified packets received on an
+    /// [`crate::IcmpSocket6`], and drops packets that fail. Use this for
+    /// packets from other sources.
+    ///
     /// This serializes the parsed packet again, so it is only as exact as the
     /// parser. To verify bytes exactly as received, use
     /// [`Self::verify_checksum_bytes`].
