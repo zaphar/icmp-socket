@@ -193,3 +193,32 @@ fn dgram_type_filter_drops_blocked_types() {
     socket.send_echo(LOCALHOST, 11, &[0x20; 8]).unwrap();
     await_reply(&mut socket, 11);
 }
+
+#[test]
+#[ignore]
+fn dgram6_loopback_roundtrip() {
+    let lo = std::net::Ipv6Addr::LOCALHOST;
+    let mut socket = DgramSocket6::bind(std::net::Ipv6Addr::UNSPECIFIED)
+        .unwrap_or_else(|e| panic!("could not open an ICMPv6 datagram socket ({})", e));
+    socket
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    socket.send_echo(lo, 12, &[0x20; 16]).unwrap();
+    loop {
+        let (msg, info) = socket.recv_with_info().unwrap();
+        if let Icmpv6Message::EchoReply {
+            identifier,
+            sequence: 12,
+            payload,
+            ..
+        } = msg
+        {
+            assert_eq!(identifier, socket.identifier());
+            assert_eq!(payload, vec![0x20; 16]);
+            assert_eq!(info.source().addr, lo);
+            assert_eq!(info.local_addr().map(|a| a.addr), Some(lo));
+            assert!(info.hop_limit().is_some());
+            return;
+        }
+    }
+}

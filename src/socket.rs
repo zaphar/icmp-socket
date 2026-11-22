@@ -486,3 +486,28 @@ socket_common!(
     local = local_v4
 );
 dgram_send!(DgramSocket4, DgramState4, addr = Ipv4Addr);
+
+/// A datagram ("ping") ICMPv6 socket. Sends echo requests only.
+pub struct DgramSocket6 {
+    fd: OwnedFd,
+    state: DgramState6,
+    read_timeout: Option<Duration>,
+}
+
+/// The I/O-free state of a [`DgramSocket6`]; see [`crate::machine`].
+pub struct DgramState6 {
+    core: Core<V6>,
+}
+
+socket_common!(
+    DgramSocket6,
+    DgramState6,
+    V6,
+    false,
+    Type::DGRAM,
+    addr = ScopedIpv6Addr,
+    msg = Icmpv6Message,
+    proto = Infallible,
+    local = local_v6
+);
+dgram_send!(DgramSocket6, DgramState6, addr = ScopedIpv6Addr);

@@ -33,7 +33,10 @@ pub use error::{Ipv4RecvError, ModelledTypeError, ParseError, RecvError};
 pub use filter::TypeFilter;
 pub use icmpv4::{Icmpv4Message, Icmpv4Other};
 pub use icmpv6::{Icmpv6Message, Icmpv6Other};
-pub use socket::{DgramSocket4, DgramState4, RawSocket4, RawSocket6, RawState4, RawState6};
+pub use socket::{
+    DgramSocket4, DgramSocket6, DgramState4, DgramState6, RawSocket4, RawSocket6, RawState4,
+    RawState6,
+};
 pub use state::{RecvInfo, SendOptions};
 
 // Compile the README examples as doctests so they stay correct.
