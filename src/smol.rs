@@ -74,7 +74,7 @@ impl<F: Family> AsyncCore<F> {
         let buf = &mut self.buf;
         let buf_size = self.buf_size;
         let recv = inner.read_with(|sock| recv_into(sock, buf, buf_size));
-        let (_, addr) = match timeout {
+        let received = match timeout {
             Some(t) => {
                 recv.or(async move {
                     Timer::after(t).await;
@@ -87,7 +87,10 @@ impl<F: Family> AsyncCore<F> {
             }
             None => recv.await?,
         };
-        Ok((decode_received::<F>(&self.buf, self.buf_size)?, addr))
+        Ok((
+            decode_received::<F>(&self.buf, received.truncated)?,
+            received.addr,
+        ))
     }
 }
 
@@ -111,8 +114,8 @@ impl AsyncIcmpV4Socket {
     }
 
     /// Set the size of the per-read receive buffer (default 2048 bytes). A
-    /// packet larger than this is truncated on read, and `rcv_from` reports a
-    /// possible truncation rather than returning a partial packet.
+    /// packet larger than this is truncated on read, and `rcv_from` reports the
+    /// truncation rather than returning a partial packet.
     pub fn set_read_buffer_size(&mut self, size: usize) {
         self.core.set_read_buffer_size(size);
     }
@@ -203,8 +206,8 @@ impl AsyncDgramIcmpV4Socket {
     }
 
     /// Set the size of the per-read receive buffer (default 2048 bytes). A
-    /// packet larger than this is truncated on read, and `rcv_from` reports a
-    /// possible truncation rather than returning a partial packet.
+    /// packet larger than this is truncated on read, and `rcv_from` reports the
+    /// truncation rather than returning a partial packet.
     pub fn set_read_buffer_size(&mut self, size: usize) {
         self.core.set_read_buffer_size(size);
     }

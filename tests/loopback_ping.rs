@@ -123,3 +123,43 @@ fn dgram_recv_buffer_truncation() {
         }
     }
 }
+
+#[test]
+#[ignore]
+fn dgram_recv_buffer_exact_fit() {
+    let localhost = Ipv4Addr::new(127, 0, 0, 1);
+    let mut socket = match DgramIcmpSocket4::new() {
+        Ok(s) => s,
+        Err(e) => panic!("could not open an ICMP datagram socket ({})", e),
+    };
+    socket
+        .bind(Ipv4Addr::new(0, 0, 0, 0))
+        .expect("failed to bind");
+    socket.set_timeout(Some(Duration::from_secs(2)));
+
+    // The reply is an 8 byte ICMP header and a 32 byte payload. macOS also
+    // delivers the 20 byte IPv4 header; Linux does not.
+    let reply_len = if cfg!(target_os = "macos") { 60 } else { 40 };
+    socket.set_read_buffer_size(reply_len);
+    socket
+        .send(localhost, 3, vec![0x20; 32])
+        .expect("failed to send");
+    loop {
+        let (resp, addr) = socket
+            .rcv_from()
+            .expect("a reply that fills the buffer exactly is not truncated");
+        if *addr
+            .as_socket_ipv4()
+            .expect("reply was not an IPv4 address")
+            .ip()
+            != localhost
+        {
+            continue;
+        }
+        if let Icmpv4Message::EchoReply { sequence, .. } = resp.message {
+            if sequence == 3 {
+                return;
+            }
+        }
+    }
+}
