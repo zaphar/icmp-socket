@@ -24,7 +24,7 @@
 use std::net::Ipv4Addr;
 
 use crate::checksum;
-use crate::error::{ModelledTypeError, ParseError};
+use crate::error::ParseError;
 use crate::wire::{Reader, Writer, check_header};
 
 /// ICMPv4 type numbers.
@@ -358,15 +358,6 @@ pub struct Icmpv4Other {
 }
 
 impl Icmpv4Other {
-    /// Build an `Other` message. Fails for a type that has its own variant,
-    /// so an `Other` never holds a modelled type.
-    pub fn new(typ: u8, code: u8, body: Vec<u8>) -> Result<Self, ModelledTypeError> {
-        if is_modelled(typ) {
-            return Err(ModelledTypeError { typ });
-        }
-        Ok(Self { typ, code, body })
-    }
-
     pub fn typ(&self) -> u8 {
         self.typ
     }
@@ -379,10 +370,6 @@ impl Icmpv4Other {
     pub fn body(&self) -> &[u8] {
         &self.body
     }
-}
-
-fn is_modelled(typ: u8) -> bool {
-    matches!(typ, 0 | 3..=6 | 8..=18 | 30..=43)
 }
 
 /// One router address entry of a Router Advertisement.
@@ -412,6 +399,15 @@ impl Icmpv4Message {
             sequence,
             payload,
         }
+    }
+
+    /// A message from its type, code and the bytes after the checksum. A
+    /// type with its own variant gives that variant, as [`Self::parse`] does.
+    pub fn from_parts(typ: u8, code: u8, body: &[u8]) -> Result<Self, ParseError> {
+        let mut bytes = Vec::with_capacity(4 + body.len());
+        bytes.extend_from_slice(&[typ, code, 0, 0]);
+        bytes.extend_from_slice(body);
+        Self::parse(&bytes)
     }
 
     /// The type number.
@@ -1043,6 +1039,11 @@ impl TryFrom<&[u8]> for Icmpv4Message {
 mod tests {
     use super::*;
 
+    /// The types with their own variant.
+    fn has_variant(typ: u8) -> bool {
+        matches!(typ, 0 | 3..=6 | 8..=18 | 30..=43)
+    }
+
     fn round_trip(msg: Icmpv4Message) {
         let bytes = msg.to_bytes();
         assert!(Icmpv4Message::verify_checksum(&bytes), "{:?}", msg);
@@ -1212,7 +1213,7 @@ mod tests {
                 flags: extended_echo_flags::ACTIVE | extended_echo_flags::IPV4,
                 extensions: vec![],
             },
-            Icmpv4Message::Other(Icmpv4Other::new(44, 0, body.clone()).unwrap()),
+            Icmpv4Message::from_parts(44, 0, &body).unwrap(),
         ] {
             round_trip(msg);
         }
@@ -1230,7 +1231,7 @@ mod tests {
             assert_eq!(parsed.typ(), typ);
             assert_eq!(
                 matches!(parsed, Icmpv4Message::Other(_)),
-                !is_modelled(typ),
+                !has_variant(typ),
                 "type {}",
                 typ
             );
@@ -1263,11 +1264,16 @@ mod tests {
     }
 
     #[test]
-    fn other_rejects_modelled_types() {
+    fn from_parts_uses_the_type_variant() {
         assert_eq!(
-            Icmpv4Other::new(8, 0, vec![]),
-            Err(ModelledTypeError { typ: 8 })
+            Icmpv4Message::from_parts(8, 0, &[0, 1, 0, 2]),
+            Ok(Icmpv4Message::echo_request(1, 2, vec![]))
         );
+        assert!(matches!(
+            Icmpv4Message::from_parts(44, 0, &[1, 2]),
+            Ok(Icmpv4Message::Other(o)) if o.typ() == 44 && o.body() == [1, 2]
+        ));
+        assert!(Icmpv4Message::from_parts(8, 0, &[0]).is_err());
     }
 
     #[test]

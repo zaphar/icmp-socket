@@ -27,7 +27,7 @@ mod sys;
 mod wire;
 
 pub use addr::ScopedIpv6Addr;
-pub use error::{Ipv4RecvError, ModelledTypeError, ParseError, RecvError};
+pub use error::{Ipv4RecvError, ParseError, RecvError};
 pub use filter::TypeFilter;
 pub use icmpv4::{Icmpv4Message, Icmpv4Other};
 pub use icmpv6::{Icmpv6Message, Icmpv6Other};

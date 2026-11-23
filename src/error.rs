@@ -42,26 +42,6 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-/// An `Other` message was built for a type number the crate models with its
-/// own variant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ModelledTypeError {
-    /// The type number.
-    pub typ: u8,
-}
-
-impl fmt::Display for ModelledTypeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "ICMP type {} has its own variant and cannot be an Other message",
-            self.typ
-        )
-    }
-}
-
-impl std::error::Error for ModelledTypeError {}
-
 /// The `ParseError` is kept inside the `io::Error`; recover it with
 /// `get_ref()` and `downcast_ref::<ParseError>()`.
 impl From<ParseError> for std::io::Error {
