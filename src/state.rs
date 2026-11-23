@@ -531,14 +531,16 @@ impl<F: Family> Machine for SendMachine<'_, F> {
     }
 }
 
+/// A processed receive: the offset of the ICMP message in the buffer and its
+/// info, or why it failed.
+pub(crate) type Outcome<F> =
+    Result<(usize, RecvInfo<<F as Family>::Addr>), RecvError<<F as Family>::Proto>>;
+
 /// How a receive hands back its message.
 pub(crate) trait RecvMode<F: Family> {
     type Output<'a>;
     const PARSE: bool;
-    fn output<'a>(
-        core: &'a Core<F>,
-        outcome: Result<(usize, RecvInfo<F::Addr>), RecvError<F::Proto>>,
-    ) -> Self::Output<'a>;
+    fn output<'a>(core: &'a Core<F>, outcome: Outcome<F>) -> Self::Output<'a>;
 }
 
 /// Parse the message.
@@ -551,10 +553,7 @@ pub(crate) struct Raw;
 impl<F: Family> RecvMode<F> for Parsed {
     type Output<'a> = Result<(F::Message, RecvInfo<F::Addr>), RecvError<F::Proto>>;
     const PARSE: bool = true;
-    fn output<'a>(
-        core: &'a Core<F>,
-        outcome: Result<(usize, RecvInfo<F::Addr>), RecvError<F::Proto>>,
-    ) -> Self::Output<'a> {
+    fn output<'a>(core: &'a Core<F>, outcome: Outcome<F>) -> Self::Output<'a> {
         let (start, info) = outcome?;
         Ok((F::parse(&core.buf[start..])?, info))
     }
@@ -563,10 +562,7 @@ impl<F: Family> RecvMode<F> for Parsed {
 impl<F: Family> RecvMode<F> for ParsedFrom {
     type Output<'a> = Result<(F::Message, F::Addr), RecvError<F::Proto>>;
     const PARSE: bool = true;
-    fn output<'a>(
-        core: &'a Core<F>,
-        outcome: Result<(usize, RecvInfo<F::Addr>), RecvError<F::Proto>>,
-    ) -> Self::Output<'a> {
+    fn output<'a>(core: &'a Core<F>, outcome: Outcome<F>) -> Self::Output<'a> {
         let (msg, info) = <Parsed as RecvMode<F>>::output(core, outcome)?;
         Ok((msg, info.source))
     }
@@ -575,10 +571,7 @@ impl<F: Family> RecvMode<F> for ParsedFrom {
 impl<F: Family> RecvMode<F> for Raw {
     type Output<'a> = Result<(&'a [u8], RecvInfo<F::Addr>), RecvError<F::Proto>>;
     const PARSE: bool = false;
-    fn output<'a>(
-        core: &'a Core<F>,
-        outcome: Result<(usize, RecvInfo<F::Addr>), RecvError<F::Proto>>,
-    ) -> Self::Output<'a> {
+    fn output<'a>(core: &'a Core<F>, outcome: Outcome<F>) -> Self::Output<'a> {
         let (start, info) = outcome?;
         Ok((&core.buf[start..], info))
     }
@@ -591,7 +584,7 @@ pub(crate) struct RecvMachine<'a, F: Family, M: RecvMode<F>> {
     /// A receive failed on a socket with an error queue: read the queue
     /// next. Holds the receive's error, for when the queue is empty.
     error_queue: Option<io::Error>,
-    outcome: Option<Result<(usize, RecvInfo<F::Addr>), RecvError<F::Proto>>>,
+    outcome: Option<Outcome<F>>,
     mode: PhantomData<M>,
 }
 
@@ -748,3 +741,4 @@ impl<'a, F: Family, M: RecvMode<F>> Machine for RecvMachine<'a, F, M> {
         }));
     }
 }
+

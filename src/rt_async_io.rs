@@ -42,6 +42,8 @@ impl Runtime for AsyncIo {
         Async::new(fd)
     }
 
+    // An explicit future, to keep the trait's `Send` bound in the signature.
+    #[allow(clippy::manual_async_fn)]
     fn io<T: Send>(
         fd: &Async<OwnedFd>,
         interest: Interest,

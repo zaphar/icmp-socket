@@ -355,7 +355,7 @@ fn read_one(level: libc::c_int, typ: libc::c_int, data: &[u8], out: &mut Receive
         }
         (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => {
             if let Some(info) = read_unaligned::<libc::in6_pktinfo>(data) {
-                out.interface_index = Some(info.ipi6_ifindex as u32);
+                out.interface_index = Some(info.ipi6_ifindex);
                 out.local_v6 = Some(Ipv6Addr::from(info.ipi6_addr.s6_addr));
             }
         }
