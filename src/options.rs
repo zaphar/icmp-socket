@@ -305,18 +305,15 @@ impl ExtensionHeader {
 /// single byte with no length or data.
 pub struct RplOptionFormat;
 
-/// The RPL Pad1 option type.
-pub const RPL_PAD1: u8 = 0;
-
 impl OptionFormat for RplOptionFormat {
     type Kind = u8;
 
     fn decode(bytes: &[u8]) -> Result<(RawOption<'_, u8>, &[u8]), OptionError> {
         need(bytes, 1)?;
-        if bytes[0] == RPL_PAD1 {
+        if bytes[0] == rpl_option::PAD1 {
             return Ok((
                 RawOption {
-                    kind: RPL_PAD1,
+                    kind: rpl_option::PAD1,
                     data: &[],
                 },
                 &bytes[1..],
@@ -335,14 +332,14 @@ impl OptionFormat for RplOptionFormat {
     }
 
     fn encode(kind: u8, data: &[u8], out: &mut Vec<u8>) -> Result<(), OptionError> {
-        if kind == RPL_PAD1 {
+        if kind == rpl_option::PAD1 {
             if !data.is_empty() {
                 return Err(OptionError::TooLong {
                     length: data.len(),
                     max: 0,
                 });
             }
-            out.push(RPL_PAD1);
+            out.push(rpl_option::PAD1);
             return Ok(());
         }
         let len = u8::try_from(data.len()).map_err(|_| OptionError::TooLong {
@@ -405,6 +402,29 @@ pub mod nd_option {
     pub const ENCRYPTED_DNS: u8 = 144;
     pub const EXPERIMENT_1: u8 = 253;
     pub const EXPERIMENT_2: u8 = 254;
+}
+
+/// RPL control message option types (IANA "RPL Control Message Options").
+pub mod rpl_option {
+    /// One byte of padding, with no length or data.
+    pub const PAD1: u8 = 0x00;
+    pub const PADN: u8 = 0x01;
+    pub const DAG_METRIC_CONTAINER: u8 = 0x02;
+    pub const ROUTING_INFORMATION: u8 = 0x03;
+    pub const DODAG_CONFIGURATION: u8 = 0x04;
+    pub const RPL_TARGET: u8 = 0x05;
+    pub const TRANSIT_INFORMATION: u8 = 0x06;
+    pub const SOLICITED_INFORMATION: u8 = 0x07;
+    pub const PREFIX_INFORMATION: u8 = 0x08;
+    pub const TARGET_DESCRIPTOR: u8 = 0x09;
+    pub const P2P_ROUTE_DISCOVERY: u8 = 0x0A;
+    pub const RREQ: u8 = 0x0B;
+    pub const RREP: u8 = 0x0C;
+    pub const ART: u8 = 0x0D;
+    pub const RNFD: u8 = 0x0E;
+    pub const STATEFUL_STORING_MODE_VIO: u8 = 0x0F;
+    pub const SOURCE_ROUTED_NON_STORING_MODE_VIO: u8 = 0x10;
+    pub const SIBLING_INFORMATION: u8 = 0x11;
 }
 
 /// RFC 4884 extension object classes (IANA "ICMP Extension Object Classes
@@ -570,7 +590,7 @@ mod tests {
     #[test]
     fn rpl_pad1_is_one_byte() {
         let list = OptionsBuilder::<RplOptionFormat>::new()
-            .option(RPL_PAD1, &[])
+            .option(rpl_option::PAD1, &[])
             .unwrap()
             .option(4, &[1, 2])
             .unwrap()
@@ -579,7 +599,7 @@ mod tests {
         let opts: Vec<_> = Options::<RplOptionFormat>::new(&list)
             .collect::<Result<_, _>>()
             .unwrap();
-        assert_eq!(opts[0].kind, RPL_PAD1);
+        assert_eq!(opts[0].kind, rpl_option::PAD1);
         assert_eq!(opts[1].data, &[1, 2]);
     }
 
