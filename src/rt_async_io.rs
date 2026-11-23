@@ -53,7 +53,7 @@ impl Runtime for AsyncIo {
         async move {
             match operation {
                 Operation::Write => fd.write_with(|fd| op(fd.as_fd())).await,
-                Operation::Read | Operation::None => fd.read_with(|fd| op(fd.as_fd())).await,
+                Operation::Read => fd.read_with(|fd| op(fd.as_fd())).await,
             }
         }
     }

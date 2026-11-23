@@ -30,9 +30,6 @@
 //! let reply = loop {
 //!     match machine.next() {
 //!         Next::Done(result) => break result,
-//!         Next::Io(Operation::None) => {
-//!             machine.perform(std::os::fd::AsFd::as_fd(&fd));
-//!         }
 //!         Next::Io(operation) => {
 //!             wait_until_ready(&fd, operation); // the runtime's wait
 //!             if let Progress::WouldBlock = machine.perform(std::os::fd::AsFd::as_fd(&fd)) {
@@ -56,8 +53,6 @@ pub enum Operation {
     Read,
     /// A write: wait until the descriptor is writable.
     Write,
-    /// A call that does not wait (e.g. setting an option): run it at once.
-    None,
 }
 
 /// The next step of a machine.

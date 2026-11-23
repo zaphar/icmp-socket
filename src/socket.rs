@@ -48,9 +48,6 @@ fn drive<M: Machine>(fd: BorrowedFd<'_>, timeout: Option<Duration>, mut machine:
     loop {
         match machine.next() {
             Next::Done(out) => return out,
-            Next::Io(Operation::None) => {
-                machine.perform(fd);
-            }
             Next::Io(operation) => {
                 let limit = match (operation, deadline) {
                     (Operation::Read, Some(deadline)) => {

@@ -426,7 +426,6 @@ impl<F: Family> Core<F> {
             hops: opts.hop_limit,
             core: self,
             payload,
-            step: SendStep::Hops,
             result: None,
         }
     }
@@ -434,7 +433,6 @@ impl<F: Family> Core<F> {
     pub(crate) fn recv<M: RecvMode<F>>(&mut self) -> RecvMachine<'_, F, M> {
         RecvMachine {
             core: Some(self),
-            error_queue: None,
             outcome: None,
             mode: PhantomData,
         }
@@ -448,20 +446,13 @@ pub(crate) enum Payload<'a, F: Family> {
     Echo { sequence: u16, payload: &'a [u8] },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SendStep {
-    Hops,
-    Send,
-}
-
-/// Sends a message: sets the hop limit if this send needs a different one
-/// than the last, then sends.
+/// Sends a message. When the descriptor is writable it sets the hop limit,
+/// if this send needs a different one than the last, then sends.
 pub(crate) struct SendMachine<'a, F: Family> {
     core: &'a mut Core<F>,
     dest: SockAddr,
     payload: Payload<'a, F>,
     hops: Option<u8>,
-    step: SendStep,
     result: Option<io::Result<()>>,
 }
 
@@ -469,58 +460,45 @@ impl<F: Family> Machine for SendMachine<'_, F> {
     type Output = io::Result<()>;
 
     fn next(&mut self) -> Next<io::Result<()>> {
-        if let Some(result) = self.result.take() {
-            return Next::Done(result);
-        }
-        if self.step == SendStep::Hops && self.core.applied_hops == self.hops {
-            self.step = SendStep::Send;
-        }
-        match self.step {
-            SendStep::Hops => Next::Io(Operation::None),
-            SendStep::Send => Next::Io(Operation::Write),
+        match self.result.take() {
+            Some(result) => Next::Done(result),
+            None => Next::Io(Operation::Write),
         }
     }
 
     fn perform(&mut self, fd: BorrowedFd<'_>) -> Progress {
-        match self.step {
-            SendStep::Hops => {
-                let value = self.hops.map_or(self.core.default_hops, libc::c_int::from);
-                match F::set_hops(fd, value) {
-                    Ok(()) => {
-                        self.core.applied_hops = self.hops;
-                        self.step = SendStep::Send;
-                    }
-                    Err(e) => self.result = Some(Err(e)),
-                }
+        if self.core.applied_hops != self.hops {
+            let value = self.hops.map_or(self.core.default_hops, libc::c_int::from);
+            if let Err(e) = F::set_hops(fd, value) {
+                self.result = Some(Err(e));
+                return Progress::Continue;
+            }
+            self.core.applied_hops = self.hops;
+        }
+        let bytes: &[u8] = match &self.payload {
+            Payload::Raw(bytes) => bytes,
+            Payload::Message(msg) => {
+                self.core.send_buf.clear();
+                F::encode(msg, &mut self.core.send_buf);
+                &self.core.send_buf
+            }
+            Payload::Echo { sequence, payload } => {
+                let msg = F::echo_request(dgram_identifier(fd), *sequence, payload);
+                self.core.send_buf.clear();
+                F::encode(&msg, &mut self.core.send_buf);
+                &self.core.send_buf
+            }
+        };
+        match SockRef::from(&fd).send_to(bytes, &self.dest) {
+            Ok(_) => {
+                self.result = Some(Ok(()));
                 Progress::Continue
             }
-            SendStep::Send => {
-                let bytes: &[u8] = match &self.payload {
-                    Payload::Raw(bytes) => bytes,
-                    Payload::Message(msg) => {
-                        self.core.send_buf.clear();
-                        F::encode(msg, &mut self.core.send_buf);
-                        &self.core.send_buf
-                    }
-                    Payload::Echo { sequence, payload } => {
-                        let msg = F::echo_request(dgram_identifier(fd), *sequence, payload);
-                        self.core.send_buf.clear();
-                        F::encode(&msg, &mut self.core.send_buf);
-                        &self.core.send_buf
-                    }
-                };
-                match SockRef::from(&fd).send_to(bytes, &self.dest) {
-                    Ok(_) => {
-                        self.result = Some(Ok(()));
-                        Progress::Continue
-                    }
-                    Err(e) if sys::would_block(&e) => Progress::WouldBlock,
-                    Err(e) if e.kind() == io::ErrorKind::Interrupted => Progress::Continue,
-                    Err(e) => {
-                        self.result = Some(Err(e));
-                        Progress::Continue
-                    }
-                }
+            Err(e) if sys::would_block(&e) => Progress::WouldBlock,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => Progress::Continue,
+            Err(e) => {
+                self.result = Some(Err(e));
+                Progress::Continue
             }
         }
     }
@@ -580,9 +558,6 @@ impl<F: Family> RecvMode<F> for Raw {
 /// fills in [`RecvInfo`].
 pub(crate) struct RecvMachine<'a, F: Family, M: RecvMode<F>> {
     core: Option<&'a mut Core<F>>,
-    /// A receive failed on a socket with an error queue: read the queue
-    /// next. Holds the receive's error, for when the queue is empty.
-    error_queue: Option<io::Error>,
     outcome: Option<Outcome<F>>,
     mode: PhantomData<M>,
 }
@@ -698,16 +673,11 @@ impl<'a, F: Family, M: RecvMode<F>> Machine for RecvMachine<'a, F, M> {
                     self.core.take().expect("a finished machine was used again");
                 Next::Done(M::output(core, outcome))
             }
-            None if self.error_queue.is_some() => Next::Io(Operation::None),
             None => Next::Io(Operation::Read),
         }
     }
 
     fn perform(&mut self, fd: BorrowedFd<'_>) -> Progress {
-        if let Some(error) = self.error_queue.take() {
-            self.read_error_queue(fd, error);
-            return Progress::Continue;
-        }
         let core = self.core();
         let read_size = core.max + F::HEADER_ROOM;
         let has_error_queue = core.error_queue;
@@ -722,7 +692,7 @@ impl<'a, F: Family, M: RecvMode<F>> Machine for RecvMachine<'a, F, M> {
             // next receive fail once with its errno; the error itself waits
             // in the error queue.
             Err(e) if has_error_queue => {
-                self.error_queue = Some(e);
+                self.read_error_queue(fd, e);
                 Progress::Continue
             }
             Err(e) => {

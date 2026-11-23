@@ -426,7 +426,6 @@ pub(crate) fn poll(
     let events = match operation {
         Operation::Read => libc::POLLIN,
         Operation::Write => libc::POLLOUT,
-        Operation::None => 0,
     };
     let ms: libc::c_int = match timeout {
         None => -1,

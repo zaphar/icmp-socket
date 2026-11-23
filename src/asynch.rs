@@ -63,9 +63,6 @@ async fn drive<R: Runtime, M: Machine + Send>(fd: &R::Registered, mut machine: M
     loop {
         match machine.next() {
             Next::Done(out) => return out,
-            Next::Io(Operation::None) => {
-                machine.perform(fd.as_fd());
-            }
             Next::Io(operation) => {
                 let ready = R::io(fd, operation, |fd| match machine.perform(fd) {
                     Progress::Continue => Ok(()),

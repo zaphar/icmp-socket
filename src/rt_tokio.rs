@@ -52,9 +52,7 @@ impl Runtime for Tokio {
         // ICMP error on a Linux datagram socket signals.
         let interest = match operation {
             Operation::Write => ::tokio::io::Interest::WRITABLE,
-            Operation::Read | Operation::None => {
-                ::tokio::io::Interest::READABLE | ::tokio::io::Interest::ERROR
-            }
+            Operation::Read => ::tokio::io::Interest::READABLE | ::tokio::io::Interest::ERROR,
         };
         fd.async_io(interest, move |fd| op(fd.as_fd()))
     }
