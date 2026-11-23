@@ -26,6 +26,15 @@ features = ["net"]
 version = "2.6"
 optional = true
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)"] }
+
+# Document the feature-gated items (async sockets, runtimes) on docs.rs, and
+# label each with the feature it needs.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dev-dependencies]
 proptest = "1"
 tokio = { version = "1.54", features = ["net", "rt", "macros", "time"] }
