@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //! Reading and writing the fixed fields of a message.
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 use crate::error::ParseError;
 
@@ -77,6 +77,19 @@ impl<'a> Reader<'a> {
         Ok(Ipv4Addr::from(self.array::<4>()?))
     }
 
+    pub(crate) fn ipv6(&mut self) -> Result<Ipv6Addr, ParseError> {
+        Ok(Ipv6Addr::from(self.array::<16>()?))
+    }
+
+    /// The bytes from the current position up to `len` bytes before the
+    /// end of the message.
+    pub(crate) fn until_last(&mut self, len: usize) -> Vec<u8> {
+        let end = self.bytes.len().saturating_sub(len).max(self.pos);
+        let out = self.bytes[self.pos..end].to_vec();
+        self.pos = end;
+        out
+    }
+
     /// Every byte after the current position.
     pub(crate) fn rest(&mut self) -> Vec<u8> {
         let rest = self.bytes.get(self.pos..).unwrap_or(&[]).to_vec();
@@ -115,6 +128,10 @@ impl<'a> Writer<'a> {
     }
 
     pub(crate) fn ipv4(&mut self, a: &Ipv4Addr) -> &mut Self {
+        self.bytes(&a.octets())
+    }
+
+    pub(crate) fn ipv6(&mut self, a: &Ipv6Addr) -> &mut Self {
         self.bytes(&a.octets())
     }
 }
