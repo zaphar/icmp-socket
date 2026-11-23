@@ -616,3 +616,49 @@ mod tests {
         assert_eq!(PrefixInformation::parse(&p.to_bytes()).unwrap(), p);
     }
 }
+
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    /// The longest input the proofs cover. A decoder reads at most the first four
+    /// bytes; the rest of the input matters only through its length.
+    const MAX: usize = 2048;
+
+    /// One call to `next` on any list state never panics, and either stops
+    /// without a change, or reads at least one byte, or fails. So a list of
+    /// `n` bytes yields at most `n + 1` items, then `None` for ever.
+    fn next_step<F: OptionFormat>() {
+        let buf: [u8; MAX] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= MAX);
+        let mut list = Options::<F> {
+            rest: &buf[..len],
+            failed: kani::any(),
+            format: PhantomData,
+        };
+        let failed = list.failed;
+        match list.next() {
+            None => {
+                assert!((failed || len == 0) && list.failed == failed && list.rest.len() == len)
+            }
+            Some(Ok(_)) => assert!(!list.failed && list.rest.len() < len),
+            Some(Err(_)) => assert!(!failed && list.failed),
+        }
+    }
+
+    #[kani::proof]
+    fn nd_options_step() {
+        next_step::<NdOptionFormat>();
+    }
+
+    #[kani::proof]
+    fn extension_objects_step() {
+        next_step::<ExtensionObjectFormat>();
+    }
+
+    #[kani::proof]
+    fn rpl_options_step() {
+        next_step::<RplOptionFormat>();
+    }
+}
