@@ -364,10 +364,56 @@ pub mod nd_option {
     pub const PREFIX_INFORMATION: u8 = 3;
     pub const REDIRECTED_HEADER: u8 = 4;
     pub const MTU: u8 = 5;
+    pub const NBMA_SHORTCUT_LIMIT: u8 = 6;
+    pub const ADVERTISEMENT_INTERVAL: u8 = 7;
+    pub const HOME_AGENT_INFORMATION: u8 = 8;
+    pub const SOURCE_ADDRESS_LIST: u8 = 9;
+    pub const TARGET_ADDRESS_LIST: u8 = 10;
+    pub const CGA: u8 = 11;
+    pub const RSA_SIGNATURE: u8 = 12;
+    pub const TIMESTAMP: u8 = 13;
+    pub const NONCE: u8 = 14;
+    pub const TRUST_ANCHOR: u8 = 15;
+    pub const CERTIFICATE: u8 = 16;
+    pub const IP_ADDRESS_PREFIX: u8 = 17;
+    pub const NEW_ROUTER_PREFIX_INFORMATION: u8 = 18;
+    pub const LINK_LAYER_ADDRESS: u8 = 19;
+    pub const NEIGHBOR_ADVERTISEMENT_ACKNOWLEDGMENT: u8 = 20;
+    pub const PVD_ID_ROUTER_ADVERTISEMENT: u8 = 21;
+    pub const MAP: u8 = 23;
     pub const ROUTE_INFORMATION: u8 = 24;
     pub const RECURSIVE_DNS_SERVER: u8 = 25;
+    pub const RA_FLAGS_EXTENSION: u8 = 26;
+    pub const HANDOVER_KEY_REQUEST: u8 = 27;
+    pub const HANDOVER_KEY_REPLY: u8 = 28;
+    pub const HANDOVER_ASSIST_INFORMATION: u8 = 29;
+    pub const MOBILE_NODE_IDENTIFIER: u8 = 30;
     pub const DNS_SEARCH_LIST: u8 = 31;
+    pub const PROXY_SIGNATURE: u8 = 32;
+    pub const ADDRESS_REGISTRATION: u8 = 33;
+    pub const SIXLOWPAN_CONTEXT: u8 = 34;
+    pub const AUTHORITATIVE_BORDER_ROUTER: u8 = 35;
+    pub const SIXLOWPAN_CAPABILITY_INDICATION: u8 = 36;
+    pub const DHCP_CAPTIVE_PORTAL: u8 = 37;
     pub const PREF64: u8 = 38;
+    pub const CRYPTO_ID_PARAMETERS: u8 = 39;
+    pub const NDP_SIGNATURE: u8 = 40;
+    pub const RESOURCE_DIRECTORY_ADDRESS: u8 = 41;
+    pub const CONSISTENT_UPTIME: u8 = 42;
+    pub const CARD_REQUEST: u8 = 138;
+    pub const CARD_REPLY: u8 = 139;
+    pub const ENCRYPTED_DNS: u8 = 144;
+    pub const EXPERIMENT_1: u8 = 253;
+    pub const EXPERIMENT_2: u8 = 254;
+}
+
+/// RFC 4884 extension object classes (IANA "ICMP Extension Object Classes
+/// and Class Sub-types").
+pub mod extension_class {
+    pub const MPLS_LABEL_STACK: u8 = 1;
+    pub const INTERFACE_INFORMATION: u8 = 2;
+    pub const INTERFACE_IDENTIFICATION: u8 = 3;
+    pub const EXTENDED_INFORMATION: u8 = 4;
 }
 
 /// The Neighbor Discovery Prefix Information option (type 3, RFC 4861
@@ -391,6 +437,8 @@ pub mod prefix_flags {
     pub const AUTONOMOUS: u8 = 0x40;
     /// Router address (RFC 6275).
     pub const ROUTER_ADDRESS: u8 = 0x20;
+    /// DHCPv6 prefix delegation preferred (RFC 9762).
+    pub const DHCPV6_PD_PREFERRED: u8 = 0x10;
 }
 
 impl PrefixInformation {
