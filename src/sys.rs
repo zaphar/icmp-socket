@@ -179,6 +179,33 @@ pub(crate) fn hop_limit_v4(fd: BorrowedFd<'_>) -> io::Result<libc::c_int> {
     get_int(fd, libc::IPPROTO_IP, libc::IP_TTL)
 }
 
+/// Set the IPv4 multicast TTL. macOS takes a one-byte value; Linux accepts
+/// one too.
+pub(crate) fn set_multicast_ttl_v4(fd: BorrowedFd<'_>, ttl: libc::c_int) -> io::Result<()> {
+    set_raw(fd, libc::IPPROTO_IP, libc::IP_MULTICAST_TTL, &(ttl as u8))
+}
+
+pub(crate) fn multicast_ttl_v4(fd: BorrowedFd<'_>) -> io::Result<libc::c_int> {
+    let mut value: u8 = 0;
+    let mut len = mem::size_of::<u8>() as libc::socklen_t;
+    // SAFETY: `value` and `len` describe a valid one-byte buffer.
+    cvt(unsafe {
+        libc::getsockopt(
+            fd.as_raw_fd(),
+            libc::IPPROTO_IP,
+            libc::IP_MULTICAST_TTL,
+            (&mut value as *mut u8).cast(),
+            &mut len,
+        )
+    })?;
+    Ok(libc::c_int::from(value))
+}
+
+/// Set the IPv6 multicast hop limit; -1 means the default (RFC 3493).
+pub(crate) fn set_multicast_hops_v6(fd: BorrowedFd<'_>, hops: libc::c_int) -> io::Result<()> {
+    set_int(fd, libc::IPPROTO_IPV6, libc::IPV6_MULTICAST_HOPS, hops)
+}
+
 /// Set the IPv6 unicast hop limit; -1 means the route's default (RFC 3493).
 pub(crate) fn set_hop_limit_v6(fd: BorrowedFd<'_>, hops: libc::c_int) -> io::Result<()> {
     set_int(fd, libc::IPPROTO_IPV6, libc::IPV6_UNICAST_HOPS, hops)

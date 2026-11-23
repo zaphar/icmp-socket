@@ -37,6 +37,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dev-dependencies]
 proptest = "1"
+socket2 = "0.6.5"
 tokio = { version = "1.54", features = ["net", "rt", "macros", "time"] }
 async-io = "2.6"
 

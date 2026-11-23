@@ -222,3 +222,26 @@ fn dgram6_loopback_roundtrip() {
         }
     }
 }
+
+#[test]
+#[ignore]
+fn dgram_multicast_hop_limit_applies_to_one_send() {
+    use socket2::SockRef;
+    let group = Ipv4Addr::new(224, 0, 0, 1);
+    let mut socket = socket();
+    let unicast = SockRef::from(&socket).ttl_v4().unwrap();
+    let multicast = SockRef::from(&socket).multicast_ttl_v4().unwrap();
+    // A multicast destination takes the multicast option, not the unicast
+    // one.
+    socket
+        .send_echo_with_options(group, 30, &[0; 8], &SendOptions::new().hop_limit(7))
+        .unwrap();
+    assert_eq!(SockRef::from(&socket).multicast_ttl_v4().unwrap(), 7);
+    assert_eq!(SockRef::from(&socket).ttl_v4().unwrap(), unicast);
+    // A plain send restores the default.
+    socket.send_echo(group, 31, &[0; 8]).unwrap();
+    assert_eq!(
+        SockRef::from(&socket).multicast_ttl_v4().unwrap(),
+        multicast
+    );
+}

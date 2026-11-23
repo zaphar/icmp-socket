@@ -97,8 +97,10 @@ pub(crate) trait Family: Sized + 'static {
     fn addr(peer: Peer) -> Option<Self::Addr>;
     fn enable_info(fd: BorrowedFd<'_>, error_queue: bool) -> io::Result<()>;
     /// The hop-limit value that restores the system default.
-    fn default_hops(fd: BorrowedFd<'_>) -> io::Result<libc::c_int>;
-    fn set_hops(fd: BorrowedFd<'_>, hops: libc::c_int) -> io::Result<()>;
+    fn default_hops(fd: BorrowedFd<'_>, kind: HopKind) -> io::Result<libc::c_int>;
+    fn set_hops(fd: BorrowedFd<'_>, kind: HopKind, hops: libc::c_int) -> io::Result<()>;
+    /// Whether packets to `addr` take the multicast hop limit.
+    fn is_multicast(addr: &Self::Addr) -> bool;
     /// Remove any IP header in front of the message and fill in what the
     /// header says. Returns the offset of the ICMP message.
     fn frame(bytes: &[u8], info: &mut Received) -> Result<usize, Self::Proto>;
@@ -149,12 +151,23 @@ impl Family for V4 {
         sys::enable_v4_info(fd, error_queue)
     }
 
-    fn default_hops(fd: BorrowedFd<'_>) -> io::Result<libc::c_int> {
-        sys::hop_limit_v4(fd)
+    fn default_hops(fd: BorrowedFd<'_>, kind: HopKind) -> io::Result<libc::c_int> {
+        match kind {
+            HopKind::Unicast => sys::hop_limit_v4(fd),
+            HopKind::Multicast => sys::multicast_ttl_v4(fd),
+        }
     }
 
-    fn set_hops(fd: BorrowedFd<'_>, hops: libc::c_int) -> io::Result<()> {
-        sys::set_hop_limit_v4(fd, hops)
+    fn set_hops(fd: BorrowedFd<'_>, kind: HopKind, hops: libc::c_int) -> io::Result<()> {
+        match kind {
+            HopKind::Unicast => sys::set_hop_limit_v4(fd, hops),
+            HopKind::Multicast => sys::set_multicast_ttl_v4(fd, hops),
+        }
+    }
+
+    /// Broadcast takes the unicast TTL; only multicast has its own option.
+    fn is_multicast(addr: &Ipv4Addr) -> bool {
+        addr.is_multicast()
     }
 
     /// Raw sockets always deliver the IPv4 header, Linux datagram sockets
@@ -281,13 +294,20 @@ impl Family for V6 {
         sys::enable_v6_info(fd, error_queue)
     }
 
-    fn default_hops(_fd: BorrowedFd<'_>) -> io::Result<libc::c_int> {
-        // RFC 3493: -1 selects the route's default.
+    fn default_hops(_fd: BorrowedFd<'_>, _kind: HopKind) -> io::Result<libc::c_int> {
+        // RFC 3493: -1 selects the default, for both options.
         Ok(-1)
     }
 
-    fn set_hops(fd: BorrowedFd<'_>, hops: libc::c_int) -> io::Result<()> {
-        sys::set_hop_limit_v6(fd, hops)
+    fn set_hops(fd: BorrowedFd<'_>, kind: HopKind, hops: libc::c_int) -> io::Result<()> {
+        match kind {
+            HopKind::Unicast => sys::set_hop_limit_v6(fd, hops),
+            HopKind::Multicast => sys::set_multicast_hops_v6(fd, hops),
+        }
+    }
+
+    fn is_multicast(addr: &ScopedIpv6Addr) -> bool {
+        addr.addr.is_multicast()
     }
 
     /// IPv6 sockets never deliver the IPv6 header.
@@ -367,6 +387,22 @@ pub(crate) fn dgram_identifier(fd: BorrowedFd<'_>) -> u16 {
     }
 }
 
+/// The two hop-limit socket options: multicast destinations take their own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HopKind {
+    Unicast,
+    Multicast,
+}
+
+/// One hop-limit option of a socket.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Hops {
+    /// The value that restores the system default.
+    default: libc::c_int,
+    /// The value last set; `None` is the system default.
+    applied: Option<u8>,
+}
+
 /// The state every socket kind shares.
 pub(crate) struct Core<F: Family> {
     raw: bool,
@@ -375,11 +411,10 @@ pub(crate) struct Core<F: Family> {
     pub(crate) buf: Vec<u8>,
     pub(crate) max: usize,
     send_buf: Vec<u8>,
-    default_hops: libc::c_int,
+    unicast_hops: Hops,
+    multicast_hops: Hops,
     /// The type filter the socket checks itself, where the kernel cannot.
     user_filter: Option<TypeFilter>,
-    /// The hop limit last set on the socket; `None` is the system default.
-    applied_hops: Option<u8>,
     family: PhantomData<F>,
 }
 
@@ -394,9 +429,15 @@ impl<F: Family> Core<F> {
             buf: Vec::with_capacity(DEFAULT_MAX_MESSAGE_SIZE),
             max: DEFAULT_MAX_MESSAGE_SIZE,
             send_buf: Vec::new(),
-            default_hops: F::default_hops(fd)?,
+            unicast_hops: Hops {
+                default: F::default_hops(fd, HopKind::Unicast)?,
+                applied: None,
+            },
+            multicast_hops: Hops {
+                default: F::default_hops(fd, HopKind::Multicast)?,
+                applied: None,
+            },
             user_filter: None,
-            applied_hops: None,
             family: PhantomData,
         })
     }
@@ -422,6 +463,11 @@ impl<F: Family> Core<F> {
         opts: &SendOptions,
     ) -> SendMachine<'a, F> {
         SendMachine {
+            hop_kind: if F::is_multicast(&dest) {
+                HopKind::Multicast
+            } else {
+                HopKind::Unicast
+            },
             dest: F::sockaddr(dest),
             hops: opts.hop_limit,
             core: self,
@@ -453,6 +499,8 @@ pub(crate) struct SendMachine<'a, F: Family> {
     dest: SockAddr,
     payload: Payload<'a, F>,
     hops: Option<u8>,
+    /// Which hop-limit option applies to the destination.
+    hop_kind: HopKind,
     result: Option<io::Result<()>>,
 }
 
@@ -467,13 +515,18 @@ impl<F: Family> Machine for SendMachine<'_, F> {
     }
 
     fn perform(&mut self, fd: BorrowedFd<'_>) -> Progress {
-        if self.core.applied_hops != self.hops {
-            let value = self.hops.map_or(self.core.default_hops, libc::c_int::from);
-            if let Err(e) = F::set_hops(fd, value) {
+        let kind = self.hop_kind;
+        let state = match kind {
+            HopKind::Unicast => &mut self.core.unicast_hops,
+            HopKind::Multicast => &mut self.core.multicast_hops,
+        };
+        if state.applied != self.hops {
+            let value = self.hops.map_or(state.default, libc::c_int::from);
+            if let Err(e) = F::set_hops(fd, kind, value) {
                 self.result = Some(Err(e));
                 return Progress::Continue;
             }
-            self.core.applied_hops = self.hops;
+            state.applied = self.hops;
         }
         let bytes: &[u8] = match &self.payload {
             Payload::Raw(bytes) => bytes,
@@ -710,4 +763,3 @@ impl<'a, F: Family, M: RecvMode<F>> Machine for RecvMachine<'a, F, M> {
         }));
     }
 }
-
