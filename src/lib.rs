@@ -11,10 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//! An ICMP socket library that tries to be ergonomic to use.
-//!
-//! The standard ping examples for both Ipv6 and IPv4 are in the examples
-//! directory.
+#![doc = include_str!("../README.md")]
 pub mod addr;
 mod checksum;
 pub mod error;
@@ -49,8 +46,3 @@ pub mod async_io;
 #[cfg(feature = "tokio")]
 #[path = "rt_tokio.rs"]
 pub mod tokio;
-
-// Compile the README examples as doctests so they stay correct.
-#[cfg(doctest)]
-#[doc = include_str!("../README.md")]
-struct ReadmeDoctests;
