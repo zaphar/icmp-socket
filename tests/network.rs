@@ -50,3 +50,32 @@ fn dgram_time_exceeded_arrives_as_a_message() {
         }
     }
 }
+
+/// The same through tokio: on Linux the Time Exceeded waits in the error
+/// queue, which signals only error readiness.
+#[cfg(feature = "tokio")]
+#[test]
+#[ignore]
+fn tokio_dgram_time_exceeded_arrives_as_a_message() {
+    let rt = ::tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let mut socket = icmp_socket::tokio::DgramSocket4::bind(Ipv4Addr::UNSPECIFIED).unwrap();
+        socket
+            .send_echo_with_options(OUTSIDE, 9, &[0x20; 16], &SendOptions::new().hop_limit(1))
+            .await
+            .unwrap();
+        ::tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if let (Icmpv4Message::TimeExceeded { .. }, _) = socket.recv_from().await.unwrap() {
+                    return;
+                }
+            }
+        })
+        .await
+        .expect("no Time Exceeded from the first router");
+    });
+}

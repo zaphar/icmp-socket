@@ -17,6 +17,29 @@ libc = "0.2.191"
 version = "0.6.5"
 features=[ "all" ]
 
+[dependencies.tokio]
+version = "1.54"
+optional = true
+features = ["net"]
+
+[dependencies.async-io]
+version = "2.6"
+optional = true
+
 [dev-dependencies]
 proptest = "1"
+tokio = { version = "1.54", features = ["net", "rt", "macros", "time"] }
+async-io = "2.6"
 
+[features]
+default = []
+# The async socket types (AsyncRawSocket4, ...) and the Runtime trait.
+async = []
+# The tokio runtime adapter.
+tokio = ["async", "dep:tokio"]
+# The async-io runtime adapter.
+async-io = ["async", "dep:async-io"]
+
+[[example]]
+name = "async_ping4"
+required-features = ["tokio"]

@@ -39,6 +39,17 @@ pub use socket::{
 };
 pub use state::{RecvInfo, SendOptions};
 
+#[cfg(feature = "async")]
+pub mod asynch;
+#[cfg(feature = "async")]
+pub use asynch::{AsyncDgramSocket4, AsyncDgramSocket6, AsyncRawSocket4, AsyncRawSocket6, Runtime};
+#[cfg(feature = "async-io")]
+#[path = "rt_async_io.rs"]
+pub mod async_io;
+#[cfg(feature = "tokio")]
+#[path = "rt_tokio.rs"]
+pub mod tokio;
+
 // Compile the README examples as doctests so they stay correct.
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]

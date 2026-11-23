@@ -24,6 +24,17 @@ jobs:
       - name: Test (default features)
         run: cargo test
 
+      - name: Build each feature alone
+        run: |
+          for f in async tokio async-io; do
+            cargo build --lib --no-default-features --features "$f"
+          done
+
+      - name: Build and test (all features)
+        run: |
+          cargo build --all-targets --all-features
+          cargo test --all-features
+
       # Validate the datagram receive path against the real kernel on each OS.
       # This is what proves parse_auto handles both the Linux (no IP header)
       # and macOS (IP header included) delivery behaviors, rather than trusting
@@ -36,7 +47,9 @@ jobs:
       # datagram sockets share identifier 0, so replies are not demuxed between
       # concurrent sockets.
       - name: Loopback ping smoke test
-        run: cargo test --test loopback_ping -- --ignored --test-threads=1
+        run: |
+          cargo test --test loopback_ping -- --ignored --test-threads=1
+          cargo test --all-features --test async_loopback -- --ignored --test-threads=1
 
       # Raw sockets need root. A cargo runner runs only the raw test binary
       # under sudo, so the build stays unprivileged.
