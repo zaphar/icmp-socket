@@ -36,7 +36,7 @@ use socket2::{SockRef, Socket, Type};
 use crate::addr::ScopedIpv6Addr;
 use crate::error::{Ipv4RecvError, RecvError};
 use crate::filter::TypeFilter;
-use crate::machine::{Interest, Machine, Next};
+use crate::machine::{Machine, Next, Operation};
 use crate::state::{Core, Family, Parsed, ParsedFrom, Payload, Raw, RecvInfo, SendOptions, V4, V6};
 use crate::sys;
 use crate::{Icmpv4Message, Icmpv6Message};
@@ -48,17 +48,17 @@ fn drive<M: Machine>(fd: BorrowedFd<'_>, timeout: Option<Duration>, mut machine:
     loop {
         match machine.next() {
             Next::Done(out) => return out,
-            Next::Io(Interest::None) => {
+            Next::Io(Operation::None) => {
                 machine.perform(fd);
             }
-            Next::Io(interest) => {
-                let limit = match (interest, deadline) {
-                    (Interest::Read, Some(deadline)) => {
+            Next::Io(operation) => {
+                let limit = match (operation, deadline) {
+                    (Operation::Read, Some(deadline)) => {
                         Some(deadline.saturating_duration_since(Instant::now()))
                     }
                     _ => None,
                 };
-                match sys::poll(fd, interest, limit) {
+                match sys::poll(fd, operation, limit) {
                     Ok(true) => {
                         machine.perform(fd);
                     }

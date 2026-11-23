@@ -21,8 +21,8 @@
 //! loop:
 //!
 //! ```no_run
-//! use icmp_socket::machine::{Interest, Machine, Next, Progress};
-//! # fn wait_until_ready(_: &std::os::fd::OwnedFd, _: Interest) {}
+//! use icmp_socket::machine::{Operation, Machine, Next, Progress};
+//! # fn wait_until_ready(_: &std::os::fd::OwnedFd, _: Operation) {}
 //!
 //! # fn example() -> std::io::Result<()> {
 //! let (fd, mut state) = icmp_socket::DgramSocket4::open()?.into_parts();
@@ -30,11 +30,11 @@
 //! let reply = loop {
 //!     match machine.next() {
 //!         Next::Done(result) => break result,
-//!         Next::Io(Interest::None) => {
+//!         Next::Io(Operation::None) => {
 //!             machine.perform(std::os::fd::AsFd::as_fd(&fd));
 //!         }
-//!         Next::Io(interest) => {
-//!             wait_until_ready(&fd, interest); // the runtime's wait
+//!         Next::Io(operation) => {
+//!             wait_until_ready(&fd, operation); // the runtime's wait
 //!             if let Progress::WouldBlock = machine.perform(std::os::fd::AsFd::as_fd(&fd)) {
 //!                 // the runtime clears its readiness here, if it needs to
 //!             }
@@ -48,23 +48,26 @@
 use std::io;
 use std::os::fd::BorrowedFd;
 
-/// What a machine waits for before its next call.
+/// The kind of call a machine runs next.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Interest {
-    /// The descriptor is readable (or has an error to report).
+pub enum Operation {
+    /// A read: wait until the descriptor is readable or has an error to
+    /// report.
     Read,
-    /// The descriptor is writable.
+    /// A write: wait until the descriptor is writable.
     Write,
-    /// Nothing: call [`Machine::perform`] at once.
+    /// A call that does not wait (e.g. setting an option): run it at once.
     None,
 }
 
 /// The next step of a machine.
 #[derive(Debug)]
 pub enum Next<T> {
-    /// Wait for the interest, then call [`Machine::perform`].
-    Io(Interest),
-    /// The operation's result. The machine is finished; do not use it again.
+    /// Wait until the descriptor is ready for the operation, then call
+    /// [`Machine::perform`].
+    Io(Operation),
+    /// The result of the send or receive. The machine is finished; do not use
+    /// it again.
     Done(T),
 }
 
@@ -73,12 +76,12 @@ pub enum Next<T> {
 pub enum Progress {
     /// The call ran; ask [`Machine::next`] what comes next.
     Continue,
-    /// The descriptor was not ready. Wait for the interest again (and clear
-    /// the runtime's readiness, if it needs that), then call `perform` again.
+    /// The descriptor was not ready. Wait until it is (and clear the runtime's
+    /// readiness, if it needs that), then call `perform` again.
     WouldBlock,
 }
 
-/// One socket operation as an I/O-free state machine.
+/// A send or receive as an I/O-free state machine.
 pub trait Machine {
     /// The operation's result.
     type Output;

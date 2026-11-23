@@ -33,7 +33,7 @@ use socket2::SockRef;
 use crate::addr::ScopedIpv6Addr;
 use crate::error::{Ipv4RecvError, RecvError};
 use crate::filter::TypeFilter;
-use crate::machine::{Interest, Machine, Next, Progress};
+use crate::machine::{Machine, Next, Operation, Progress};
 use crate::state::{RecvInfo, SendOptions};
 use crate::{
     DgramSocket4, DgramSocket6, DgramState4, DgramState6, Icmpv4Message, Icmpv6Message, RawSocket4,
@@ -48,12 +48,12 @@ pub trait Runtime {
     /// Register a non-blocking descriptor with the runtime.
     fn register(fd: OwnedFd) -> io::Result<Self::Registered>;
 
-    /// Run `op` when `fd` is ready for `interest`; when `op` fails with
-    /// `WouldBlock`, wait and run it again. `Interest::Read` must also wake
+    /// Run `op` when `fd` is ready for `operation`; when `op` fails with
+    /// `WouldBlock`, wait and run it again. `Operation::Read` must also wake
     /// for an error condition on the descriptor.
     fn io<T: Send>(
         fd: &Self::Registered,
-        interest: Interest,
+        operation: Operation,
         op: impl FnMut(BorrowedFd<'_>) -> io::Result<T> + Send,
     ) -> impl Future<Output = io::Result<T>> + Send;
 }
@@ -63,11 +63,11 @@ async fn drive<R: Runtime, M: Machine + Send>(fd: &R::Registered, mut machine: M
     loop {
         match machine.next() {
             Next::Done(out) => return out,
-            Next::Io(Interest::None) => {
+            Next::Io(Operation::None) => {
                 machine.perform(fd.as_fd());
             }
-            Next::Io(interest) => {
-                let ready = R::io(fd, interest, |fd| match machine.perform(fd) {
+            Next::Io(operation) => {
+                let ready = R::io(fd, operation, |fd| match machine.perform(fd) {
                     Progress::Continue => Ok(()),
                     Progress::WouldBlock => Err(io::ErrorKind::WouldBlock.into()),
                 })

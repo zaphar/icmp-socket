@@ -30,7 +30,7 @@ use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use ::async_io::Async;
 
 use crate::asynch::{self, Runtime};
-use crate::machine::Interest;
+use crate::machine::Operation;
 
 /// The async-io runtime.
 pub enum AsyncIo {}
@@ -46,14 +46,14 @@ impl Runtime for AsyncIo {
     #[allow(clippy::manual_async_fn)]
     fn io<T: Send>(
         fd: &Async<OwnedFd>,
-        interest: Interest,
+        operation: Operation,
         mut op: impl FnMut(BorrowedFd<'_>) -> io::Result<T> + Send,
     ) -> impl Future<Output = io::Result<T>> + Send {
         // async-io counts an error condition as readable.
         async move {
-            match interest {
-                Interest::Write => fd.write_with(|fd| op(fd.as_fd())).await,
-                Interest::Read | Interest::None => fd.read_with(|fd| op(fd.as_fd())).await,
+            match operation {
+                Operation::Write => fd.write_with(|fd| op(fd.as_fd())).await,
+                Operation::Read | Operation::None => fd.read_with(|fd| op(fd.as_fd())).await,
             }
         }
     }

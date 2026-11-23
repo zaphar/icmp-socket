@@ -414,19 +414,19 @@ pub(crate) fn would_block(e: &io::Error) -> bool {
     e.kind() == io::ErrorKind::WouldBlock
 }
 
-/// Wait with `poll` until `fd` is ready for `interest`, or `timeout` passes.
+/// Wait with `poll` until `fd` is ready for `operation`, or `timeout` passes.
 /// Returns `false` on timeout. An error condition on the socket also counts
 /// as ready, so the next call reports it.
 pub(crate) fn poll(
     fd: BorrowedFd<'_>,
-    interest: crate::machine::Interest,
+    operation: crate::machine::Operation,
     timeout: Option<std::time::Duration>,
 ) -> io::Result<bool> {
-    use crate::machine::Interest;
-    let events = match interest {
-        Interest::Read => libc::POLLIN,
-        Interest::Write => libc::POLLOUT,
-        Interest::None => 0,
+    use crate::machine::Operation;
+    let events = match operation {
+        Operation::Read => libc::POLLIN,
+        Operation::Write => libc::POLLOUT,
+        Operation::None => 0,
     };
     let ms: libc::c_int = match timeout {
         None => -1,

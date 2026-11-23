@@ -28,7 +28,7 @@ use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use ::tokio::io::unix::AsyncFd;
 
 use crate::asynch::{self, Runtime};
-use crate::machine::Interest;
+use crate::machine::Operation;
 
 /// The tokio runtime. Sockets must be created inside a tokio runtime.
 pub enum Tokio {}
@@ -45,14 +45,14 @@ impl Runtime for Tokio {
 
     fn io<T: Send>(
         fd: &AsyncFd<OwnedFd>,
-        interest: Interest,
+        operation: Operation,
         mut op: impl FnMut(BorrowedFd<'_>) -> io::Result<T> + Send,
     ) -> impl Future<Output = io::Result<T>> + Send {
         // tokio's READABLE does not include error readiness, which a queued
         // ICMP error on a Linux datagram socket signals.
-        let interest = match interest {
-            Interest::Write => ::tokio::io::Interest::WRITABLE,
-            Interest::Read | Interest::None => {
+        let interest = match operation {
+            Operation::Write => ::tokio::io::Interest::WRITABLE,
+            Operation::Read | Operation::None => {
                 ::tokio::io::Interest::READABLE | ::tokio::io::Interest::ERROR
             }
         };

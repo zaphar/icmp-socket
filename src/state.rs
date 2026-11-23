@@ -24,7 +24,7 @@ use socket2::{Domain, Protocol, SockAddr, SockRef};
 use crate::addr::ScopedIpv6Addr;
 use crate::error::{Ipv4RecvError, ParseError, RecvError};
 use crate::filter::TypeFilter;
-use crate::machine::{Interest, Machine, Next, Progress};
+use crate::machine::{Machine, Next, Operation, Progress};
 use crate::sys::{self, Peer, Received};
 use crate::{Icmpv4Message, Icmpv6Message};
 
@@ -476,8 +476,8 @@ impl<F: Family> Machine for SendMachine<'_, F> {
             self.step = SendStep::Send;
         }
         match self.step {
-            SendStep::Hops => Next::Io(Interest::None),
-            SendStep::Send => Next::Io(Interest::Write),
+            SendStep::Hops => Next::Io(Operation::None),
+            SendStep::Send => Next::Io(Operation::Write),
         }
     }
 
@@ -698,8 +698,8 @@ impl<'a, F: Family, M: RecvMode<F>> Machine for RecvMachine<'a, F, M> {
                     self.core.take().expect("a finished machine was used again");
                 Next::Done(M::output(core, outcome))
             }
-            None if self.error_queue.is_some() => Next::Io(Interest::None),
-            None => Next::Io(Interest::Read),
+            None if self.error_queue.is_some() => Next::Io(Operation::None),
+            None => Next::Io(Operation::Read),
         }
     }
 
