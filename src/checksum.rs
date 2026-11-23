@@ -74,3 +74,55 @@ mod tests {
         assert_eq!(sum_words(&[0x12, 0x34, 0x56]), 0x1234 + 0x5600);
     }
 }
+
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    /// A message of any bytes, `min..=N` long.
+    fn any_message<const N: usize>(buf: &mut [u8; N], min: usize) -> &mut [u8] {
+        *buf = kani::any();
+        let len: usize = kani::any();
+        kani::assume((min..=N).contains(&len));
+        &mut buf[..len]
+    }
+
+    #[kani::proof]
+    #[kani::unwind(34)]
+    fn sum_words_never_panics() {
+        let mut buf = [0u8; 64];
+        sum_words(any_message(&mut buf, 0));
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn fold_ends() {
+        fold(kani::any());
+    }
+
+    /// Adding the complement of a folded sum gives 0xFFFF. With
+    /// `checksum_adds_to_the_sum`, a filled message verifies. Real sums are
+    /// below `u32::MAX`: a 65,535-byte message and the IPv6 pseudo-header sum
+    /// to less than 2^31.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn complement_folds_to_all_ones() {
+        let sum: u64 = kani::any();
+        kani::assume(sum <= u64::from(u32::MAX));
+        assert!(fold(sum + u64::from(!fold(sum))) == 0xFFFF);
+    }
+
+    /// The checksum field adds its value to the sum of the message.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn checksum_adds_to_the_sum() {
+        let mut buf = [0u8; 16];
+        let message = any_message(&mut buf, 4);
+        message[2] = 0;
+        message[3] = 0;
+        let zeroed = sum_words(message);
+        let checksum: u16 = kani::any();
+        message[2..4].copy_from_slice(&checksum.to_be_bytes());
+        assert!(sum_words(message) == zeroed + u64::from(checksum));
+    }
+}
