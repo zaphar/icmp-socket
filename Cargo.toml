@@ -27,7 +27,7 @@ version = "2.6"
 optional = true
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)", "cfg(kani)"] }
 
 # Document the feature-gated items (async sockets, runtimes) on docs.rs, and
 # label each with the feature it needs.

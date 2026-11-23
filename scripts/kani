@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Run the Kani proofs under a memory cap.
+#
+# Usage: scripts/kani [--mem-mb N] [cargo kani arguments...]
+#
+# The cap (default 4096 MB, or $KANI_MEM_MB) is on the total resident memory
+# of every process in the run. Over the cap, the run is killed. e.g.
+#   scripts/kani --mem-mb 2048 --harness checksum::proofs
+set -u
+limit_mb=${KANI_MEM_MB:-4096}
+if [ "${1:-}" = "--mem-mb" ]; then
+  limit_mb=$2
+  shift 2
+fi
+limit_kb=$((limit_mb * 1024))
+cd "$(dirname "$0")/.." || exit 1
+
+# A new process group, so the cap counts and kills the whole run.
+set -m
+nix develop .#kani -c cargo kani --lib "$@" &
+group=$!
+set +m
+
+stop() {
+  kill -TERM -"$group" 2>/dev/null
+  sleep 2
+  kill -KILL -"$group" 2>/dev/null
+}
+trap 'stop; exit 130' INT TERM HUP
+
+peak=0
+while kill -0 "$group" 2>/dev/null; do
+  rss=$(ps -A -o pgid=,rss= | awk -v g="$group" '$1 == g { s += $2 } END { print s + 0 }')
+  [ "$rss" -gt "$peak" ] && peak=$rss
+  if [ "$rss" -gt "$limit_kb" ]; then
+    echo "kani: memory $((rss / 1024)) MB is over the cap of $limit_mb MB; stopping" >&2
+    stop
+    wait "$group" 2>/dev/null
+    exit 137
+  fi
+  sleep 0.5
+done
+wait "$group"
+status=$?
+echo "kani: peak memory $((peak / 1024)) MB" >&2
+exit $status

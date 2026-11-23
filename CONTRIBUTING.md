@@ -16,3 +16,11 @@ permissions or a network:
 On Linux the raw tests also run without root in a user and network
 namespace: build them with `cargo test --test raw_loopback --no-run`, then run
 the test binary with `unshare -rn sh -c "ip link set lo up && <binary> --ignored --test-threads=1"`.
+
+## Proofs
+
+`scripts/kani` runs the [Kani](https://model-checking.github.io/kani/) proofs
+(`#[cfg(kani)]` modules) under a memory cap: 4096 MB by default, or
+`--mem-mb N`. The first run installs Kani with `nix develop .#kani`. Extra
+arguments go to `cargo kani`, e.g. `scripts/kani --harness checksum::proofs`.
+The proofs do not run in CI.
