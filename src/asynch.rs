@@ -122,29 +122,33 @@ macro_rules! async_common {
                 $local(self.fd.as_fd())
             }
 
-            /// The largest message one receive accepts (default 2048 bytes).
+            /// The largest message a receive accepts (default 2048 bytes).
             pub fn set_max_message_size(&mut self, size: usize) {
                 self.state.set_max_message_size(size);
             }
 
-            /// Receive only messages whose type passes `filter`.
+            /// Receive only messages whose type passes `filter`. The same
+            /// filter gives the same result on every socket: the kernel filters
+            /// where it can (`ICMP6_FILTER` on raw ICMPv6 sockets, `ICMP_FILTER`
+            /// for ICMPv4 types 0 to 31 on Linux raw sockets), and the socket
+            /// drops the other blocked messages itself and keeps waiting.
             pub fn set_type_filter(&mut self, filter: &TypeFilter) -> io::Result<()> {
                 self.state.set_type_filter(self.fd.as_fd(), filter)
             }
 
-            /// Receive one message and the address it came from.
+            /// Receive a message and the address it came from.
             pub async fn recv_from(&mut self) -> Result<($msg, $addr), RecvError<$proto>> {
                 drive::<R, _>(&self.fd, self.state.recv_from()).await
             }
 
-            /// Receive one message and facts about its packet.
+            /// Receive a message and facts about its packet.
             pub async fn recv_with_info(
                 &mut self,
             ) -> Result<($msg, RecvInfo<$addr>), RecvError<$proto>> {
                 drive::<R, _>(&self.fd, self.state.recv_with_info()).await
             }
 
-            /// Receive one message as ICMP bytes, unparsed and unchecked.
+            /// Receive a message as ICMP bytes, unparsed and unchecked.
             pub async fn recv_raw(
                 &mut self,
             ) -> Result<(&[u8], RecvInfo<$addr>), RecvError<$proto>> {

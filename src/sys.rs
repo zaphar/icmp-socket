@@ -211,7 +211,7 @@ pub(crate) fn set_icmp6_filter(fd: BorrowedFd<'_>, blocked: [u32; 8]) -> io::Res
     }
 }
 
-/// Read one message into the spare capacity of `buf` (at most `max`
+/// Read a message into the spare capacity of `buf` (at most `max`
 /// bytes) with `recvmsg`. On return `buf` holds the bytes received.
 /// `error_queue` reads the Linux error queue instead (non-blocking).
 pub(crate) fn recvmsg(

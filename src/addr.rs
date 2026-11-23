@@ -25,11 +25,6 @@ use std::str::FromStr;
 /// `ff02::1`) are unique only on one link, so they need a scope ID. Global
 /// addresses use scope 0.
 ///
-/// With scope 0, a link-local destination behaves differently per system:
-/// macOS fails the send with `EHOSTUNREACH`, and Linux sends on an
-/// interface its routing table picks. Give a scope ID for the same
-/// behavior on both.
-///
 /// ```
 /// use icmp_socket::ScopedIpv6Addr;
 ///

@@ -155,24 +155,27 @@ macro_rules! socket_common {
                 self.read_timeout
             }
 
-            /// The largest message one receive accepts (default 2048 bytes).
+            /// The largest message a receive accepts (default 2048 bytes).
             /// A larger message fails with [`RecvError::Truncated`].
             pub fn set_max_message_size(&mut self, size: usize) {
                 self.state.set_max_message_size(size);
             }
 
-            /// Receive only messages whose type passes `filter`. See
-            /// [`TypeFilter`].
+            /// Receive only messages whose type passes `filter`. The same
+            /// filter gives the same result on every socket: the kernel filters
+            /// where it can (`ICMP6_FILTER` on raw ICMPv6 sockets, `ICMP_FILTER`
+            /// for ICMPv4 types 0 to 31 on Linux raw sockets), and the socket
+            /// drops the other blocked messages itself and keeps waiting.
             pub fn set_type_filter(&mut self, filter: &TypeFilter) -> io::Result<()> {
                 self.state.set_type_filter(self.fd.as_fd(), filter)
             }
 
-            /// Receive one message and the address it came from.
+            /// Receive a message and the address it came from.
             pub fn recv_from(&mut self) -> Result<($msg, $addr), RecvError<$proto>> {
                 drive(self.fd.as_fd(), self.read_timeout, self.state.recv_from())
             }
 
-            /// Receive one message and facts about its packet.
+            /// Receive a message and facts about its packet.
             pub fn recv_with_info(&mut self) -> Result<($msg, RecvInfo<$addr>), RecvError<$proto>> {
                 drive(
                     self.fd.as_fd(),
@@ -181,7 +184,7 @@ macro_rules! socket_common {
                 )
             }
 
-            /// Receive one message as ICMP bytes (no IP header), without
+            /// Receive a message as ICMP bytes (no IP header), without
             /// parsing it or checking its checksum. The bytes stay valid until
             /// the next receive.
             pub fn recv_raw(&mut self) -> Result<(&[u8], RecvInfo<$addr>), RecvError<$proto>> {
@@ -240,14 +243,14 @@ macro_rules! socket_common {
                 self.core.set_type_filter(fd, filter)
             }
 
-            /// The machine for one `recv_from`.
+            /// The machine for a `recv_from`.
             pub fn recv_from(
                 &mut self,
             ) -> impl Machine<Output = Result<($msg, $addr), RecvError<$proto>>> + '_ {
                 self.core.recv::<ParsedFrom>()
             }
 
-            /// The machine for one `recv_with_info`.
+            /// The machine for a `recv_with_info`.
             pub fn recv_with_info(
                 &mut self,
             ) -> impl Machine<Output = Result<($msg, RecvInfo<$addr>), RecvError<$proto>>> + '_
@@ -255,7 +258,7 @@ macro_rules! socket_common {
                 self.core.recv::<Parsed>()
             }
 
-            /// The machine for one `recv_raw`.
+            /// The machine for a `recv_raw`.
             pub fn recv_raw(
                 &mut self,
             ) -> impl Machine<Output = Result<(&[u8], RecvInfo<$addr>), RecvError<$proto>>> + '_
@@ -311,7 +314,7 @@ macro_rules! raw_send {
         }
 
         impl $state {
-            /// The machine for one `send_to`.
+            /// The machine for a `send_to`.
             pub fn send_to<'a>(
                 &'a mut self,
                 dest: impl Into<$addr>,
@@ -321,7 +324,7 @@ macro_rules! raw_send {
                     .send(dest.into(), Payload::Message(msg), &SendOptions::new())
             }
 
-            /// The machine for one `send_to_with_options`.
+            /// The machine for a `send_to_with_options`.
             pub fn send_to_with_options<'a>(
                 &'a mut self,
                 dest: impl Into<$addr>,
@@ -331,7 +334,7 @@ macro_rules! raw_send {
                 self.core.send(dest.into(), Payload::Message(msg), opts)
             }
 
-            /// The machine for one `send_raw_with_options`.
+            /// The machine for a `send_raw_with_options`.
             pub fn send_raw_with_options<'a>(
                 &'a mut self,
                 dest: impl Into<$addr>,
@@ -389,7 +392,7 @@ macro_rules! dgram_send {
         }
 
         impl $state {
-            /// The machine for one `send_echo_with_options`.
+            /// The machine for a `send_echo_with_options`.
             pub fn send_echo_with_options<'a>(
                 &'a mut self,
                 dest: impl Into<$addr>,
@@ -420,6 +423,10 @@ pub struct RawState4 {
 ///
 /// The kernel computes the checksum of every message sent and verifies it on
 /// every message received (RFC 3542 section 3.1).
+///
+/// A link-local destination with scope 0 behaves differently per system:
+/// macOS fails the send with `EHOSTUNREACH`, and Linux sends on an interface
+/// its routing table picks. Give a scope ID for the same behavior on both.
 pub struct RawSocket6 {
     fd: OwnedFd,
     state: RawState6,
@@ -488,6 +495,10 @@ socket_common!(
 dgram_send!(DgramSocket4, DgramState4, addr = Ipv4Addr);
 
 /// A datagram ("ping") ICMPv6 socket. Sends echo requests only.
+///
+/// A link-local destination with scope 0 behaves differently per system:
+/// macOS fails the send with `EHOSTUNREACH`, and Linux sends on an interface
+/// its routing table picks. Give a scope ID for the same behavior on both.
 pub struct DgramSocket6 {
     fd: OwnedFd,
     state: DgramState6,

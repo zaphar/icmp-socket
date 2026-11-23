@@ -31,9 +31,8 @@ use crate::{Icmpv4Message, Icmpv6Message};
 /// The default maximum message size: a reply on a typical Ethernet MTU.
 pub(crate) const DEFAULT_MAX_MESSAGE_SIZE: usize = 2048;
 
-/// Options for one send: fields of the IP header of the packet that carries
-/// the message. They apply to that send only; a plain send uses the system
-/// defaults.
+/// Options for a send: fields of the IP header of the packet that carries the
+/// message.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SendOptions {
     hop_limit: Option<u8>,
@@ -455,7 +454,7 @@ enum SendStep {
     Send,
 }
 
-/// Sends one message: sets the hop limit if this send needs a different one
+/// Sends a message: sets the hop limit if this send needs a different one
 /// than the last, then sends.
 pub(crate) struct SendMachine<'a, F: Family> {
     core: &'a mut Core<F>,
@@ -577,7 +576,7 @@ impl<F: Family> RecvMode<F> for Raw {
     }
 }
 
-/// Receives one message: reads it, removes any IP header, checks it and
+/// Receives a message: reads it, removes any IP header, checks it and
 /// fills in [`RecvInfo`].
 pub(crate) struct RecvMachine<'a, F: Family, M: RecvMode<F>> {
     core: Option<&'a mut Core<F>>,
@@ -595,7 +594,7 @@ impl<F: Family, M: RecvMode<F>> RecvMachine<'_, F, M> {
             .expect("a finished machine was used again")
     }
 
-    /// Process one received message.
+    /// Process a received message.
     fn process(&mut self, mut received: Received) {
         let core = self.core();
         if received.truncated {

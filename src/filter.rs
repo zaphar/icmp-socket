@@ -13,13 +13,7 @@
 // limitations under the License.
 //! Filtering received messages by type.
 
-/// Which ICMP types a socket receives. Set it with a socket's
-/// `set_type_filter`.
-///
-/// The same filter gives the same result on every socket. The kernel
-/// filters where it can (`ICMP6_FILTER` for raw ICMPv6 sockets, and
-/// `ICMP_FILTER` for ICMPv4 types 0 to 31 on Linux raw sockets); otherwise
-/// the socket drops blocked messages itself and keeps waiting.
+/// A set of ICMP types for a socket's `set_type_filter`.
 ///
 /// ```
 /// use icmp_socket::TypeFilter;

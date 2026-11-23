@@ -13,7 +13,7 @@
 // limitations under the License.
 //! The I/O-free state machines behind every socket operation.
 //!
-//! A [`Machine`] holds every decision of one send or receive. It never
+//! A [`Machine`] holds every decision of a send or receive. It never
 //! waits; a driver waits, then lets the machine run its pending
 //! non-blocking call on the descriptor. The crate's blocking and async
 //! sockets are drivers. Any other runtime can drive a machine too: split a
