@@ -229,6 +229,10 @@ fn dgram_multicast_hop_limit_applies_to_one_send() {
     use socket2::SockRef;
     let group = Ipv4Addr::new(224, 0, 0, 1);
     let mut socket = socket();
+    // Send through loopback, so the test needs no multicast route.
+    SockRef::from(&socket)
+        .set_multicast_if_v4(&Ipv4Addr::LOCALHOST)
+        .unwrap();
     let unicast = SockRef::from(&socket).ttl_v4().unwrap();
     let multicast = SockRef::from(&socket).multicast_ttl_v4().unwrap();
     // A multicast destination takes the multicast option, not the unicast
